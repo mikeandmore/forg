@@ -1,0 +1,19 @@
+[package]
+name = "forg"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+gpui = { git = "https://github.com/zed-industries/zed" }
+serde = "1.0.210"
+serde_derive = "1.0.210"
+unicode-segmentation = "1.12.0"
+
+[profile.dev]
+overflow-checks = false
+debug-assertions = false
+debug = false
+lto = false
+
