@@ -4,6 +4,8 @@ use std::path::PathBuf;
 pub mod line_edit;
 pub mod models;
 pub mod views;
+pub mod icon_source;
+
 use models::CurrentDirModel;
 use views::FileListView;
 

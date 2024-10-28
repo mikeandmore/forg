@@ -1,10 +1,9 @@
 use gpui::*;
 use std::fs::DirEntry;
 use std::ops::Range;
-use std::path::PathBuf;
 
 use crate::line_edit::CommitEvent;
-
+use crate::icon_source::IconSource;
 use super::line_edit::LineEdit;
 use super::models::CurrentDirModel;
 
@@ -19,8 +18,8 @@ struct DirEntryView {
 
 impl DirEntryView {
     fn new(
-        cx: &AppContext,
         id: usize,
+        icon: ImageSource,
         listview: View<FileListView>,
         model: Model<CurrentDirModel>,
         text_offset: f32,
@@ -28,23 +27,10 @@ impl DirEntryView {
         Self {
             id,
             listview,
-            icon: Self::icon_image_source(&model.read(cx).entries[id]).into(),
+            icon,
             model,
             text_offset,
         }
-    }
-
-    fn icon_image_source(entry: &DirEntry) -> PathBuf {
-        if let Ok(file_type) = entry.file_type() {
-            if file_type.is_dir() {
-                return PathBuf::from(
-                    "/home/mike/.local/share/icons/Papirus/64x64/places/folder.svg",
-                );
-            } else {
-                return PathBuf::from("/home/mike/.local/share/icons/Papirus/64x64/mimetypes/application-x-generic.svg");
-            }
-        }
-        return PathBuf::from("");
     }
 }
 
@@ -123,6 +109,8 @@ pub struct FileListView {
 
     focus_handle: FocusHandle,
     scroll_range: Range<usize>,
+
+    icon_source: IconSource,
 }
 
 impl FileListView {
@@ -191,6 +179,7 @@ impl FileListView {
             line_edit,
             status_text: "".into(),
             focus_handle,
+            icon_source: IconSource::new(),
         }
     }
 
@@ -207,6 +196,13 @@ impl FileListView {
         self.icon_size / 32. * 6.
     }
 
+    fn icon_image_source(&self, dir_ent: &DirEntry, cx: &WindowContext) -> ImageSource {
+        if dir_ent.file_type().map(|file_type| file_type.is_dir()).unwrap_or(false) {
+            self.icon_source.match_directory(self.icon_size as usize, cx.scale_factor())
+        } else {
+            self.icon_source.match_filename(dir_ent.file_name().to_str().unwrap(), self.icon_size as usize, cx.scale_factor())
+        }
+    }
 
     fn clear_text_offset_cache(&mut self, cx: &WindowContext) {
         self.text_offset_cache_scale = cx.scale_factor();
@@ -373,8 +369,8 @@ impl Render for FileListView {
                                         std::cmp::min((lidx + 1) * per_line, nr_items);
                                     for id in lidx * per_line..last_in_line {
                                         line.push(DirEntryView::new(
-                                            cx,
                                             id,
+                                            this.icon_image_source(&model.read(cx).entries[id], cx),
                                             view.clone(),
                                             model.clone(),
                                             this.text_offset_for_item(cx, id),
