@@ -96,7 +96,7 @@ impl RenderOnce for DirEntryView {
 
 actions!(
     actions,
-    [MoveNext, MovePrev, MoveHome, MoveEnd, ToggleMark, Open, Back, Search, Escape]
+    [MoveNext, MovePrev, MoveHome, MoveEnd, ToggleMark, ToggleHidden, Open, Back, Search, Escape]
 );
 
 pub struct FileListView {
@@ -127,6 +127,7 @@ impl FileListView {
                 KeyBinding::new("alt-<", MoveHome, None),
                 KeyBinding::new("alt->", MoveEnd, None),
                 KeyBinding::new("m", ToggleMark, None),
+                KeyBinding::new("h", ToggleHidden, None),
                 KeyBinding::new("enter", Open, None),
                 KeyBinding::new("backspace", Back, None),
                 KeyBinding::new("ctrl-s", Search, None),
@@ -428,6 +429,9 @@ impl Render for FileListView {
             }))
             .on_action(cx.listener(|this: &mut Self, _: &ToggleMark, cx| {
                 this.update_model(cx, &CurrentDirModel::toggle_mark);
+            }))
+            .on_action(cx.listener(|this: &mut Self, _: &ToggleHidden, cx| {
+                this.update_model_view(cx, &CurrentDirModel::toggle_hidden, &FileListView::on_navigate);
             }))
             .on_action(cx.listener(|this: &mut Self, _: &Open, cx| {
                 this.update_model_view(cx, &CurrentDirModel::open, &FileListView::on_navigate);

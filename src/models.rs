@@ -13,14 +13,15 @@ pub struct CurrentDirModel {
     pub marked: BTreeSet<usize>,
     pub history: Vec<PathBuf>,
     pub start_with: String,
-
+    pub show_hidden: bool,
 }
 
 impl CurrentDirModel {
-    fn load_entries(path: &Path) -> Vec<DirEntry> {
+    fn load_entries(path: &Path, show_hidden: bool) -> Vec<DirEntry> {
         let mut entries = std::fs::read_dir(path)
             .unwrap()
             .filter_map(|entry| entry.ok())
+            .filter(|entry| show_hidden || entry.file_name().as_encoded_bytes()[0] != b'.')
             .collect::<Vec<DirEntry>>();
         entries.sort_by(|p, q| {
             if let (Ok(pf), Ok(qf)) = (p.file_type(), q.file_type()) {
@@ -36,14 +37,15 @@ impl CurrentDirModel {
         entries
     }
 
-    pub fn new(dir_path: PathBuf) -> Self {
+    pub fn new(dir_path: PathBuf, show_hidden: bool) -> Self {
         Self {
-            entries: Self::load_entries(&dir_path),
+            entries: Self::load_entries(&dir_path, show_hidden),
             current: None,
             marked: BTreeSet::new(),
             dir_path,
             history: vec![],
             start_with: String::new(),
+            show_hidden,
         }
     }
 
@@ -109,13 +111,23 @@ impl CurrentDirModel {
         self.move_next(cx);
     }
 
+    pub fn toggle_hidden(&mut self, cx: &mut ModelContext<Self>) {
+        self.show_hidden = !self.show_hidden;
+        self.marked = BTreeSet::new();
+        let cur_filename = self.current.map(|idx| self.entries[idx].file_name());
+        self.entries = Self::load_entries(&self.dir_path, self.show_hidden);
+        if let Some(last_filename) = cur_filename {
+            self.current = self.entries.iter().position(|ent| ent.file_name() == last_filename);
+        }
+    }
+
     pub fn open(&mut self, _: &mut ModelContext<Self>) {
         let open_dir = |this: &mut Self, path: PathBuf| {
             this.history.push(std::mem::take(&mut this.dir_path));
             this.dir_path = path;
             this.current = None;
             this.marked = BTreeSet::new();
-            this.entries = Self::load_entries(&this.dir_path);
+            this.entries = Self::load_entries(&this.dir_path, this.show_hidden);
         };
 
         let focus_ent = |this: &mut Self, name: &OsStr| {
@@ -170,7 +182,7 @@ impl CurrentDirModel {
             self.dir_path = path;
             self.current = None;
             self.marked = BTreeSet::new();
-            self.entries = Self::load_entries(&self.dir_path);
+            self.entries = Self::load_entries(&self.dir_path, self.show_hidden);
         }
     }
 }
