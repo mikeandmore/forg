@@ -2,8 +2,8 @@ use gpui::*;
 use std::fs::DirEntry;
 use std::ops::Range;
 
+use crate::app_global::AppGlobal;
 use crate::line_edit::CommitEvent;
-use crate::icon_source::IconSource;
 use super::line_edit::LineEdit;
 use super::models::CurrentDirModel;
 
@@ -12,6 +12,7 @@ struct DirEntryView {
     id: usize,
     listview: View<FileListView>,
     icon: ImageSource,
+    mime_type: String,
     model: Model<CurrentDirModel>,
     text_offset: f32,
 }
@@ -21,6 +22,7 @@ impl DirEntryView {
         id: usize,
         icon: ImageSource,
         listview: View<FileListView>,
+        mime_type: String,
         model: Model<CurrentDirModel>,
         text_offset: f32,
     ) -> Self {
@@ -28,6 +30,7 @@ impl DirEntryView {
             id,
             listview,
             icon,
+            mime_type,
             model,
             text_offset,
         }
@@ -109,8 +112,6 @@ pub struct FileListView {
 
     focus_handle: FocusHandle,
     scroll_range: Range<usize>,
-
-    icon_source: IconSource,
 }
 
 impl FileListView {
@@ -179,7 +180,6 @@ impl FileListView {
             line_edit,
             status_text: "".into(),
             focus_handle,
-            icon_source: IconSource::new(),
         }
     }
 
@@ -196,12 +196,19 @@ impl FileListView {
         self.icon_size / 32. * 6.
     }
 
-    fn icon_image_source(&self, dir_ent: &DirEntry, cx: &WindowContext) -> ImageSource {
+    fn icon_image_source(&self, dir_ent: &DirEntry, mime: &str, cx: &WindowContext) -> ImageSource {
+        let app_global = cx.global::<AppGlobal>();
         if dir_ent.file_type().map(|file_type| file_type.is_dir()).unwrap_or(false) {
-            self.icon_source.match_directory(self.icon_size as usize, cx.scale_factor())
+            app_global.match_directory_icon(self.icon_size as usize, cx.scale_factor())
         } else {
-            self.icon_source.match_filename(dir_ent.file_name().to_str().unwrap(), self.icon_size as usize, cx.scale_factor())
+            app_global.match_file_icon(mime, self.icon_size as usize, cx.scale_factor())
         }
+    }
+
+    fn mime_type(&self, dir_ent: &DirEntry, cx: &WindowContext) -> String {
+        let app_global = cx.global::<AppGlobal>();
+
+        app_global.match_mime_type(dir_ent.file_name().to_str().unwrap())
     }
 
     fn clear_text_offset_cache(&mut self, cx: &WindowContext) {
@@ -368,10 +375,14 @@ impl Render for FileListView {
                                     let last_in_line =
                                         std::cmp::min((lidx + 1) * per_line, nr_items);
                                     for id in lidx * per_line..last_in_line {
+                                        let dir_ent = &model.read(cx).entries[id];
+                                        let mime = this.mime_type(dir_ent, cx);
+
                                         line.push(DirEntryView::new(
                                             id,
-                                            this.icon_image_source(&model.read(cx).entries[id], cx),
+                                            this.icon_image_source(dir_ent, &mime, cx),
                                             view.clone(),
+                                            mime,
                                             model.clone(),
                                             this.text_offset_for_item(cx, id),
                                         ));
