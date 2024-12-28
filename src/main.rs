@@ -3,11 +3,12 @@ use gpui::*;
 use std::path::PathBuf;
 
 pub mod line_edit;
+pub mod dialog;
 pub mod models;
 pub mod views;
 pub mod app_global;
 
-use models::CurrentDirModel;
+use models::DirModel;
 use views::FileListView;
 
 fn main() {
@@ -24,7 +25,7 @@ fn main() {
                 ..Default::default()
             },
             |cx| {
-                let model = cx.new_model(|_| CurrentDirModel::new(PathBuf::from("/"), false));
+                let model = cx.new_model(|_| DirModel::new(PathBuf::from("/"), false));
                 let view = cx.new_view(|cx| {
                     let mut view = FileListView::new(cx, model);
                     view.on_navigate(cx);

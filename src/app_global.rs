@@ -1,12 +1,14 @@
 use std::path::{Path, PathBuf};
 use xdg_desktop::icon::{IconDescription, IconIndex};
+use xdg_desktop::menu::{MenuAssociation, MenuIndex, MenuItem};
 use xdg_desktop::mime_glob::MIMEGlobIndex;
 
 use gpui::{Global, ImageSource};
 
 pub struct AppGlobal {
     mime_index: MIMEGlobIndex,
-    icon_index: IconIndex,
+    pub icon_index: IconIndex,
+    pub menu_index: MenuIndex,
 }
 
 impl Global for AppGlobal {}
@@ -17,14 +19,17 @@ impl AppGlobal {
         let dirs = std::env::var("XDG_DATA_DIRS").unwrap_or(String::from("/usr/share:/usr/local/share"));
         icon_index.scan_with_theme(vec!["Papirus", "hicolor"], dirs.split(":").map(|s| Path::new(s)));
         let mime_index = MIMEGlobIndex::new().unwrap();
+        let mut menu_index = MenuIndex::new_default();
+        menu_index.scan();
 
         Self {
             mime_index,
             icon_index,
+            menu_index,
         }
     }
 
-    fn match_icon(&self, mime: &str, size: usize, scale: f32) -> Option<ImageSource> {
+    pub fn match_icon(&self, mime: &str, size: usize, scale: f32) -> Option<ImageSource> {
         let actual_size = (size as f32 * scale) as usize;
         self.icon_index.index.get(mime).map(move |icons| -> ImageSource {
             let mut mindiff = usize::MAX;
@@ -68,5 +73,18 @@ impl AppGlobal {
             eprintln!("Cannot even find icon for folder?");
             PathBuf::from("").into()
         })
+    }
+
+    pub fn get_mime_assoc_index(&self, mime: &str) -> Option<&MenuAssociation> {
+        self.menu_index.mime_assoc_index.get(mime)
+    }
+
+    pub fn get_menu_item(&self, idx: usize) -> &MenuItem {
+        &self.menu_index.items[idx]
+    }
+
+    pub fn write_default_assoc(&mut self, mime: &str, idx: usize) {
+        self.menu_index.change_default_assoc(mime, idx);
+        self.menu_index.write_default_assoc().unwrap();
     }
 }

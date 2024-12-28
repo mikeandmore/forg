@@ -8,11 +8,13 @@ edition = "2021"
 [dependencies]
 gpui = { git = "https://github.com/zed-industries/zed" }
 xdg_desktop = { git = "https://github.com/mikeandmore/xdg-desktop.git" }
+futures = "0.3"
 serde = "1.0.210"
 serde_derive = "1.0.210"
 unicode-segmentation = "1.12.0"
 regex = "1.9.5"
 memmap = "0.7.0"
+smol = "1.2"
 
 [profile.dev]
 overflow-checks = false

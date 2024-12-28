@@ -4,16 +4,18 @@ use std::ops::Range;
 
 use crate::app_global::AppGlobal;
 use crate::line_edit::CommitEvent;
+use crate::models::{DialogRequest, DialogResponse, IOWorker};
 use super::line_edit::LineEdit;
-use super::models::CurrentDirModel;
+use super::models::DirModel;
+use super::dialog::Dialog;
 
 #[derive(IntoElement)]
 struct DirEntryView {
     id: usize,
     listview: View<FileListView>,
     icon: ImageSource,
-    mime_type: String,
-    model: Model<CurrentDirModel>,
+    // mime_type: String,
+    model: Model<DirModel>,
     text_offset: f32,
 }
 
@@ -22,15 +24,15 @@ impl DirEntryView {
         id: usize,
         icon: ImageSource,
         listview: View<FileListView>,
-        mime_type: String,
-        model: Model<CurrentDirModel>,
+        _mime_type: String,
+        model: Model<DirModel>,
         text_offset: f32,
     ) -> Self {
         Self {
             id,
             listview,
             icon,
-            mime_type,
+            // mime_type,
             model,
             text_offset,
         }
@@ -96,16 +98,18 @@ impl RenderOnce for DirEntryView {
 
 actions!(
     actions,
-    [MoveNext, MovePrev, MoveHome, MoveEnd, ToggleMark, ToggleHidden, Open, Back, Search, Escape]
+    [MoveNext, MovePrev, MoveHome, MoveEnd, ToggleMark, ToggleHidden, Open, Remove, Back, Search, Escape]
 );
 
 pub struct FileListView {
-    model: Model<CurrentDirModel>,
+    model: Model<DirModel>,
     scroll_handle: UniformListScrollHandle,
     icon_size: f32,
 
     text_offset_cache: Vec<Option<f32>>,
     text_offset_cache_scale: f32,
+
+    dialog: View<Dialog>,
 
     pub line_edit: View<LineEdit>,
     status_text: SharedString,
@@ -115,40 +119,43 @@ pub struct FileListView {
 }
 
 impl FileListView {
-    pub fn new(cx: &mut ViewContext<Self>, model: Model<CurrentDirModel>) -> Self {
+    fn on_dismiss<V>(&mut self, _source: View<V>, _: &DismissEvent, cx: &mut ViewContext<Self>) {
+        println!("dismiss event reset");
+        self.focus_handle.focus(cx);
+        self.line_edit.update(cx, |view, _| {
+            view.reset();
+        });
+        self.update_view(cx, |view, cx| {
+            view.model.update(cx, &DirModel::search_clear);
+            view.reset_status(cx);
+        });
+        Self::enter_mode(cx);
+    }
+    fn enter_mode(cx: &mut ViewContext<Self>) {
+        cx.clear_key_bindings();
+        cx.bind_keys([
+            KeyBinding::new("n", MoveNext, None),
+            KeyBinding::new("p", MovePrev, None),
+            KeyBinding::new("alt-<", MoveHome, None),
+            KeyBinding::new("alt->", MoveEnd, None),
+            KeyBinding::new("m", ToggleMark, None),
+            KeyBinding::new("h", ToggleHidden, None),
+            KeyBinding::new("d", Remove, None),
+            KeyBinding::new("enter", Open, None),
+            KeyBinding::new("backspace", Back, None),
+            KeyBinding::new("ctrl-s", Search, None),
+            KeyBinding::new("escape", Escape, None),
+        ]);
+    }
+    pub fn new(cx: &mut ViewContext<Self>, model: Model<DirModel>) -> Self {
         let focus_handle = cx.focus_handle();
 
-        cx.on_focus(&focus_handle, |_, cx| {
-            println!("focus main");
-            cx.clear_key_bindings();
-            cx.bind_keys([
-                KeyBinding::new("n", MoveNext, None),
-                KeyBinding::new("p", MovePrev, None),
-                KeyBinding::new("alt-<", MoveHome, None),
-                KeyBinding::new("alt->", MoveEnd, None),
-                KeyBinding::new("m", ToggleMark, None),
-                KeyBinding::new("h", ToggleHidden, None),
-                KeyBinding::new("enter", Open, None),
-                KeyBinding::new("backspace", Back, None),
-                KeyBinding::new("ctrl-s", Search, None),
-                KeyBinding::new("escape", Escape, None),
-            ]);
-        })
-        .detach();
+        Self::enter_mode(cx);
 
         let line_edit = cx.new_view(&LineEdit::new);
-        cx.subscribe(&line_edit, |this, edit, _: &DismissEvent, cx| {
-            println!("dismiss event reset");
-            this.focus_handle.focus(cx);
-            edit.update(cx, |view, _| {
-                view.reset();
-            });
-            this.update_view(cx, |view, cx| {
-                view.model.update(cx, &CurrentDirModel::search_clear);
-                view.reset_status(cx);
-            });
-        })
-        .detach();
+        let dialog = cx.new_view(&Dialog::new);
+        cx.subscribe(&line_edit, &Self::on_dismiss).detach();
+        cx.subscribe(&dialog, &Self::on_dismiss).detach();
 
         cx.subscribe(&line_edit, |this, edit, _: &CommitEvent, cx| {
             this.focus_handle.focus(cx);
@@ -178,6 +185,7 @@ impl FileListView {
             icon_size: 64.,
             text_offset_cache: Vec::new(),
             text_offset_cache_scale: 0.,
+            dialog,
             line_edit,
             status_text: "".into(),
             focus_handle,
@@ -241,7 +249,7 @@ impl FileListView {
         if self.model.read(cx).start_with.is_empty() {
             self.popup_line_edit(cx, "Search".into());
         } else {
-            self.model.update(cx, &CurrentDirModel::search_next);
+            self.model.update(cx, &DirModel::search_next);
         }
     }
 
@@ -292,7 +300,7 @@ impl FileListView {
     pub fn update_model<Func>(&mut self, cx: &mut ViewContext<Self>, func: Func)
     where
         Func:
-            FnMut(&mut CurrentDirModel, &mut ModelContext<'_, CurrentDirModel>) + std::marker::Copy,
+            FnMut(&mut DirModel, &mut ModelContext<'_, DirModel>) + std::marker::Copy,
     {
         self.update_model_view(cx, func, |_, _| {});
     }
@@ -304,7 +312,7 @@ impl FileListView {
         view_func: ViewFunc,
     ) where
         Func:
-            FnMut(&mut CurrentDirModel, &mut ModelContext<'_, CurrentDirModel>) + std::marker::Copy,
+            FnMut(&mut DirModel, &mut ModelContext<'_, DirModel>) + std::marker::Copy,
         ViewFunc: FnMut(&mut Self, &mut ViewContext<Self>) + std::marker::Copy,
     {
         self.model.update(cx, func.clone());
@@ -321,6 +329,60 @@ impl FileListView {
         ViewFunc: FnMut(&mut Self, &mut ViewContext<Self>) + std::marker::Copy,
     {
         self.update_model_view(cx, |_, _| {}, view_func);
+    }
+
+    pub fn update_with_io_worker<T: Send + 'static, Callback>(
+        &mut self, cx: &mut ViewContext<Self>, worker_result: Result<IOWorker<T>, String>, callback: Callback)
+    where Callback: FnOnce(&mut Self, &mut ViewContext<Self>, T) + 'static {
+        match worker_result {
+            Err(err) => {
+                self.dialog.update(cx, |dialog, cx| {
+                    dialog.show_just_error(err.into(), cx);
+                });
+            },
+            Ok(worker) => {
+                self.dialog.update(cx, |dialog, cx| {
+                    dialog.show(
+                        DialogRequest::new(worker.desc.into(), vec![]),
+                        None, cx);
+                });
+                cx.spawn(|this, mut cx| async move {
+                    loop {
+                        let Ok(ui_req) = worker.ui.recv().await else {
+                            break;
+                        };
+                        this.update(&mut cx, |this, cx| {
+                            let chan = worker.input.clone();
+                            let s = cx.subscribe(&this.dialog, move |_this, _dialog, response: &DialogResponse, cx| {
+                                let chan = chan.clone();
+                                let res = response.clone();
+                                cx.spawn(|_this, _cx| async move {
+                                    chan.send(res).await.expect("Cannot send to IOWorker");
+                                }).detach();
+                            });
+                            this.dialog.update(cx, |dialog, cx| {
+                                dialog.show(ui_req, Some(s), cx);
+                            });
+                        }).unwrap();
+                    }
+                    match worker.result.await {
+                        Ok(result) => {
+                            this.update(&mut cx, move |this, cx| {
+                                callback(this, cx, result);
+                                this.dialog.update(cx, &Dialog::hide);
+                            }).unwrap();
+                        },
+                        Err(err) => {
+                            this.update(&mut cx, |this, cx| {
+                                this.dialog.update(cx, |dialog, cx| {
+                                    dialog.show_just_error(err.into(), cx)
+                                });
+                            }).unwrap();
+                        }
+                    }
+                }).detach();
+            }
+        }
     }
 }
 
@@ -415,34 +477,65 @@ impl Render for FileListView {
                     .bg(rgb(0xefefef))
                     .children(status_children),
             )
+            .child(self.dialog.clone())
             .on_action(cx.listener(|this: &mut Self, _: &MoveNext, cx| {
-                this.update_model(cx, &CurrentDirModel::move_next);
+                this.update_model(cx, &DirModel::move_next);
             }))
             .on_action(cx.listener(|this: &mut Self, _: &MovePrev, cx| {
-                this.update_model(cx, &CurrentDirModel::move_prev);
+                this.update_model(cx, &DirModel::move_prev);
             }))
             .on_action(cx.listener(|this: &mut Self, _: &MoveHome, cx| {
-                this.update_model(cx, &CurrentDirModel::move_home);
+                this.update_model(cx, &DirModel::move_home);
             }))
             .on_action(cx.listener(|this: &mut Self, _: &MoveEnd, cx| {
-                this.update_model(cx, &CurrentDirModel::move_end);
+                this.update_model(cx, &DirModel::move_end);
             }))
             .on_action(cx.listener(|this: &mut Self, _: &ToggleMark, cx| {
-                this.update_model(cx, &CurrentDirModel::toggle_mark);
+                this.update_model(cx, &DirModel::toggle_mark);
             }))
             .on_action(cx.listener(|this: &mut Self, _: &ToggleHidden, cx| {
-                this.update_model_view(cx, &CurrentDirModel::toggle_hidden, &FileListView::on_navigate);
+                this.update_model_view(cx, &DirModel::toggle_hidden, &FileListView::on_navigate);
             }))
             .on_action(cx.listener(|this: &mut Self, _: &Open, cx| {
-                this.update_model_view(cx, &CurrentDirModel::open, &FileListView::on_navigate);
+                let should_open_dir = this.model.read(cx).should_open_dir();
+                println!("here");
+                match should_open_dir {
+                    Some(true) => {
+                        let worker = this.model.update(cx, &DirModel::open_dir);
+                        this.update_with_io_worker(cx, worker, |this, cx, open_result| {
+                            this.model.update(cx, |model, _| model.open_with_result(open_result));
+                            this.on_navigate(cx);
+                        });
+                    },
+                    Some(false) => {
+                        let worker = this.model.update(cx, &DirModel::open_file);
+                        this.update_with_io_worker(cx, worker, |this, cx, open_result| {
+                            this.model.update(cx, |_, cx| DirModel::after_open_file_result(open_result, cx));
+                        });
+                    },
+                    None => {
+
+                    },
+                }
+            }))
+            .on_action(cx.listener(move |this: &mut Self, _: &Remove, cx| {
+                let worker = this.model.update(cx, &DirModel::delete);
+                this.update_with_io_worker(cx, worker, |this, cx, open_result| {
+                    this.model.update(cx, |model, _| model.refresh_with_result(open_result));
+                    this.on_navigate(cx);
+                });
             }))
             .on_action(cx.listener(|this: &mut Self, _: &Back, cx| {
                 if this.model.read(cx).start_with.is_empty() {
-                    this.update_model_view(cx, &CurrentDirModel::back, &FileListView::on_navigate);
+                    let worker = this.model.update(cx, &DirModel::back);
+                    this.update_with_io_worker(cx, worker, |this, cx, open_result| {
+                        this.model.update(cx, |model, _| model.back_with_result(open_result));
+                        this.on_navigate(cx);
+                    });
                 } else {
                     this.update_model_view(
                         cx,
-                        &CurrentDirModel::search_clear,
+                        &DirModel::search_clear,
                         &FileListView::on_search,
                     );
                 }
