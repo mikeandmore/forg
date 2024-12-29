@@ -53,14 +53,13 @@ impl RenderOnce for DirEntryView {
             .flex_none()
             .px(px(self.text_offset + text_radius))
             .text_size(px(font_size))
-            .h(px(font_size + 2. * text_radius))
-            .whitespace_nowrap()
-            .overflow_x_hidden()
             .rounded(px(text_radius))
             .child(text.clone());
 
         if model.current == Some(self.id) {
-            label_div.style().background = Some(Fill::from(rgb(0x0068d9)));
+            label_div = label_div.bg(rgb(0x0068d9)).absolute().top(px(icon_size));
+        } else {
+            label_div = label_div.whitespace_nowrap().overflow_x_hidden().h(px(font_size + 2. * text_radius));
         }
 
         if let Ok(file_type) = model.entries[self.id].file_type() {
@@ -202,7 +201,7 @@ impl FileListView {
         self.icon_size * 1.5
     }
     fn margin_size(&self) -> f32 {
-        self.icon_size / 16.
+        self.icon_size / 8.
     }
     fn text_radius(&self) -> f32 {
         self.icon_size / 16.

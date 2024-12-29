@@ -22,7 +22,7 @@ fn main() {
         cx.set_global(AppGlobal::new());
         println!("Done");
 
-        let bounds = Bounds::centered(None, size(px(426.), px(480.)), cx);
+        let bounds = Bounds::centered(None, size(px(460.), px(480.)), cx);
 
         cx.open_window(
             WindowOptions {
