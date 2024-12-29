@@ -24,7 +24,6 @@ actions!(
 pub struct LineEdit {
     focus_handle: FocusHandle,
     pub content: SharedString,
-    pub placeholder: SharedString,
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
@@ -64,7 +63,6 @@ impl LineEdit {
         LineEdit {
             focus_handle,
             content: "".into(),
-            placeholder: "".into(),
             selected_range: 0..0,
             selection_reversed: false,
             marked_range: None,
@@ -248,7 +246,6 @@ impl LineEdit {
 
     pub fn reset(&mut self) {
         self.content = "".into();
-        self.placeholder = "".into();
         self.selected_range = 0..0;
         self.selection_reversed = false;
         self.marked_range = None;
@@ -407,11 +404,7 @@ impl Element for TextElement {
         let cursor = input.cursor_offset();
         let style = cx.text_style();
 
-        let (display_text, text_color) = if content.is_empty() {
-            (input.placeholder.clone(), hsla(0., 0., 0., 0.2))
-        } else {
-            (content.clone(), style.color)
-        };
+        let (display_text, text_color) = (content.clone(), style.color);
 
         let run = TextRun {
             len: display_text.len(),
