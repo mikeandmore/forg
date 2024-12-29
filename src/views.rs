@@ -100,6 +100,20 @@ actions!(
     [MoveNext, MovePrev, MoveHome, MoveEnd, ToggleMark, ToggleHidden, Open, Remove, Copy, Cut, Paste, Back, Search, Escape]
 );
 
+pub enum StatusPrompt {
+    Search,
+    Rename,
+}
+
+impl StatusPrompt {
+    fn to_str(&self) -> &'static str {
+        match self {
+            Self::Search => "Search: ",
+            Self::Rename => "Rename: ",
+        }
+    }
+}
+
 pub struct FileListView {
     model: Model<DirModel>,
     scroll_handle: UniformListScrollHandle,
@@ -112,7 +126,7 @@ pub struct FileListView {
 
     pub line_edit: View<LineEdit>,
     status_text: SharedString,
-    status_prompt: SharedString,
+    status_prompt: Option<StatusPrompt>,
 
     focus_handle: FocusHandle,
     scroll_range: Range<usize>,
@@ -192,7 +206,7 @@ impl FileListView {
             dialog,
             line_edit,
             status_text: "".into(),
-            status_prompt: "".into(),
+            status_prompt: None,
             focus_handle,
         }
     }
@@ -233,7 +247,7 @@ impl FileListView {
     }
 
     fn reset_status(&mut self, cx: &ViewContext<Self>) {
-        self.status_prompt = "".into();
+        self.status_prompt = None;
         self.status_text =
             SharedString::from(format!("{} Items", self.model.read(cx).entries.len()));
     }
@@ -245,14 +259,14 @@ impl FileListView {
         self.line_edit.update(cx, |_, cx| { cx.emit(DismissEvent); });
     }
 
-    pub fn popup_line_edit(&mut self, cx: &mut ViewContext<Self>, prompt: SharedString) {
+    pub fn popup_line_edit(&mut self, cx: &mut ViewContext<Self>, prompt: Option<StatusPrompt>) {
         self.status_prompt = prompt;
         cx.focus_view(&self.line_edit);
     }
 
     fn on_search(&mut self, cx: &mut ViewContext<Self>) {
         if self.model.read(cx).start_with.is_empty() {
-            self.popup_line_edit(cx, "Search: ".into());
+            self.popup_line_edit(cx, Some(StatusPrompt::Search));
         } else {
             self.model.update(cx, &DirModel::search_next);
         }
@@ -414,9 +428,9 @@ impl Render for FileListView {
             .w(px(128.))
             .text_size(px(12.))
             .child(self.status_text.clone())];
-        if !self.status_prompt.is_empty() {
+        if let Some(prompt) = &self.status_prompt {
             status_children.insert(0, div().flex_auto().child(self.line_edit.clone()));
-            status_children.insert(0, div().text_size(px(12.)).child(self.status_prompt.clone()));
+            status_children.insert(0, div().text_size(px(12.)).child(prompt.to_str()));
         }
 
         div()
