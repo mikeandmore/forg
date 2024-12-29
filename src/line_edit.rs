@@ -50,7 +50,7 @@ impl LineEdit {
                 KeyBinding::new("right", Right, None),
                 KeyBinding::new("shift-left", SelectLeft, None),
                 KeyBinding::new("shift-right", SelectRight, None),
-                KeyBinding::new("cmd-a", SelectAll, None),
+                KeyBinding::new("ctrl-a", SelectAll, None),
                 KeyBinding::new("home", Home, None),
                 KeyBinding::new("end", End, None),
                 KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, None),
@@ -147,7 +147,7 @@ impl LineEdit {
         cx.show_character_palette();
     }
 
-    fn move_to(&mut self, offset: usize, cx: &mut ViewContext<Self>) {
+    pub fn move_to(&mut self, offset: usize, cx: &mut ViewContext<Self>) {
         self.selected_range = offset..offset;
         cx.notify()
     }
@@ -178,7 +178,7 @@ impl LineEdit {
         line.closest_index_for_x(position.x - bounds.left())
     }
 
-    fn select_to(&mut self, offset: usize, cx: &mut ViewContext<Self>) {
+    pub fn select_to(&mut self, offset: usize, cx: &mut ViewContext<Self>) {
         if self.selection_reversed {
             self.selected_range.start = offset
         } else {
@@ -540,7 +540,7 @@ impl Render for LineEdit {
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .bg(rgb(0xeeeeee))
-            .text_size(px(10.))
+            .text_size(px(12.))
             .child(
                 div()
                     .h(px(20.))

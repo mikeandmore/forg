@@ -8,6 +8,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs::{DirEntry};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::time::{Duration, SystemTime};
 
 use crate::app_global::AppGlobal;
@@ -750,4 +751,36 @@ impl DirModel {
         }
     }
 
+    pub fn rename(&mut self, cx: &mut ModelContext<Self>, new_name: String) -> Result<IOWorker<OpenDirResult>, String> {
+        let Some(cur) = self.current else {
+            return IOWorker::err("Nothing selected.");
+        };
+        let src = self.entries[cur].path();
+        let show_hidden = self.show_hidden;
+        let path = self.dir_path.clone();
+
+        IOWorker::spawn(
+            cx.background_executor(),
+            "Renaming",
+            |ui_send, input_recv| async move {
+                let mut target = src.clone();
+                target.pop();
+                target.push(&new_name);
+
+                // We need to perform this in IOWorker because it may block on NFS.
+                if let Err(err) = std::fs::rename(&src, &target) {
+                    worker_error(
+                        format!("Cannot rename {}, {}", src.file_name().unwrap().to_string_lossy(), err).into(),
+                        &ui_send,
+                        &input_recv).await;
+                    return Err("Rename failed".to_string());
+                }
+                let entries = Self::load_entries(&path, show_hidden);
+                Ok(OpenDirResult {
+                    path,
+                    entries,
+                    current: Some(OsString::from_str(&new_name).unwrap()),
+                })
+            })
+    }
 }

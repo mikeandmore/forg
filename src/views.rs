@@ -3,8 +3,8 @@ use std::fs::DirEntry;
 use std::ops::Range;
 
 use crate::app_global::AppGlobal;
-use crate::line_edit::CommitEvent;
-use crate::models::{DialogRequest, DialogResponse, IOWorker};
+use crate::line_edit::{CommitEvent};
+use crate::models::{DialogRequest, DialogResponse, IOWorker, OpenDirResult};
 use super::line_edit::LineEdit;
 use super::models::DirModel;
 use super::dialog::Dialog;
@@ -97,9 +97,10 @@ impl RenderOnce for DirEntryView {
 
 actions!(
     actions,
-    [MoveNext, MovePrev, MoveHome, MoveEnd, ToggleMark, ToggleHidden, Open, Remove, Copy, Cut, Paste, Back, Search, Escape]
+    [MoveNext, MovePrev, MoveHome, MoveEnd, ToggleMark, ToggleHidden, Open, Remove, Copy, Cut, Paste, Rename, Back, Search, Escape]
 );
 
+#[derive(PartialEq)]
 pub enum StatusPrompt {
     Search,
     Rename,
@@ -155,6 +156,7 @@ impl FileListView {
             KeyBinding::new("m", ToggleMark, None),
             KeyBinding::new("h", ToggleHidden, None),
             KeyBinding::new("d", Remove, None),
+            KeyBinding::new("r", Rename, None),
             KeyBinding::new("enter", Open, None),
             KeyBinding::new("backspace", Back, None),
             KeyBinding::new("ctrl-s", Search, None),
@@ -164,20 +166,17 @@ impl FileListView {
             KeyBinding::new("ctrl-y", Paste, None),
         ]);
     }
-    pub fn new(cx: &mut ViewContext<Self>, model: Model<DirModel>) -> Self {
-        let focus_handle = cx.focus_handle();
 
+    fn on_line_edit_commit(&mut self, edit: View<LineEdit>, _: &CommitEvent, cx: &mut ViewContext<Self>) {
+        self.focus_handle.focus(cx);
         Self::enter_mode(cx);
 
-        let line_edit = cx.new_view(&LineEdit::new);
-        let dialog = cx.new_view(&Dialog::new);
-        cx.subscribe(&line_edit, &Self::on_dismiss).detach();
-        cx.subscribe(&dialog, &Self::on_dismiss).detach();
+        let Some(prompt) = &self.status_prompt else {
+            return;
+        };
 
-        cx.subscribe(&line_edit, |this, edit, _: &CommitEvent, cx| {
-            this.focus_handle.focus(cx);
-            Self::enter_mode(cx);
-            this.update_view(cx, |view, cx| {
+        if *prompt == StatusPrompt::Search {
+            self.update_view(cx, |view, cx| {
                 let result = view.model.update(cx, |model, cx| {
                     model.start_with = edit.read(cx).content.to_string();
                     model.search_next(cx)
@@ -190,9 +189,27 @@ impl FileListView {
                 } else {
                     view.status_text = SharedString::from("Not Found");
                 }
+
             });
-        })
-        .detach();
+        } else if *prompt == StatusPrompt::Rename {
+            let new_name = edit.read(cx).content.to_string();
+            self.reset_status(cx);
+            let worker = self.model.update(cx, |model, cx| model.rename(cx, new_name));
+            self.update_with_io_worker(cx, worker, &Self::io_worker_refresh_callback);
+        }
+    }
+
+    pub fn new(cx: &mut ViewContext<Self>, model: Model<DirModel>) -> Self {
+        let focus_handle = cx.focus_handle();
+
+        Self::enter_mode(cx);
+
+        let line_edit = cx.new_view(&LineEdit::new);
+        let dialog = cx.new_view(&Dialog::new);
+        cx.subscribe(&line_edit, &Self::on_dismiss).detach();
+        cx.subscribe(&dialog, &Self::on_dismiss).detach();
+
+        cx.subscribe(&line_edit, Self::on_line_edit_commit).detach();
 
         let scroll_handle = UniformListScrollHandle::new();
 
@@ -259,14 +276,22 @@ impl FileListView {
         self.line_edit.update(cx, |_, cx| { cx.emit(DismissEvent); });
     }
 
-    pub fn popup_line_edit(&mut self, cx: &mut ViewContext<Self>, prompt: Option<StatusPrompt>) {
+    pub fn popup_line_edit(&mut self, cx: &mut ViewContext<Self>, prompt: Option<StatusPrompt>, existing_text: Option<String>) {
         self.status_prompt = prompt;
+        if let Some(text) = existing_text {
+            self.line_edit.update(cx, |model, cx| {
+                let text: SharedString = text.into();
+                let len = text.len();
+                model.content = text;
+                model.select_to(len, cx);
+            });
+        }
         cx.focus_view(&self.line_edit);
     }
 
     fn on_search(&mut self, cx: &mut ViewContext<Self>) {
         if self.model.read(cx).start_with.is_empty() {
-            self.popup_line_edit(cx, Some(StatusPrompt::Search));
+            self.popup_line_edit(cx, Some(StatusPrompt::Search), None);
         } else {
             self.model.update(cx, &DirModel::search_next);
         }
@@ -348,6 +373,11 @@ impl FileListView {
         ViewFunc: FnMut(&mut Self, &mut ViewContext<Self>) + std::marker::Copy,
     {
         self.update_model_view(cx, |_, _| {}, view_func);
+    }
+
+    fn io_worker_refresh_callback(&mut self, cx: &mut ViewContext<Self>, open_result: OpenDirResult) {
+        self.model.update(cx, |model, _| model.refresh_with_result(open_result));
+        self.on_navigate(cx);
     }
 
     pub fn update_with_io_worker<T: Send + 'static, Callback>(
@@ -545,17 +575,11 @@ impl Render for FileListView {
             }))
             .on_action(cx.listener(|this: &mut Self, _: &Paste, cx| {
                 let worker = this.model.update(cx, &DirModel::paste);
-                this.update_with_io_worker(cx, worker, |this, cx, open_result| {
-                    this.model.update(cx, |model, _| model.refresh_with_result(open_result));
-                    this.on_navigate(cx);
-                });
+                this.update_with_io_worker(cx, worker, &Self::io_worker_refresh_callback);
             }))
             .on_action(cx.listener(move |this: &mut Self, _: &Remove, cx| {
                 let worker = this.model.update(cx, &DirModel::delete);
-                this.update_with_io_worker(cx, worker, |this, cx, open_result| {
-                    this.model.update(cx, |model, _| model.refresh_with_result(open_result));
-                    this.on_navigate(cx);
-                });
+                this.update_with_io_worker(cx, worker, &Self::io_worker_refresh_callback);
             }))
             .on_action(cx.listener(|this: &mut Self, _: &Back, cx| {
                 if this.model.read(cx).start_with.is_empty() {
@@ -574,6 +598,16 @@ impl Render for FileListView {
             }))
             .on_action(cx.listener(|this: &mut Self, _: &Search, cx| {
                 this.update_view(cx, &FileListView::on_search);
+            }))
+            .on_action(cx.listener(|this: &mut Self, _: &Rename, cx| {
+                let Some(cur) = this.model.read(cx).current else {
+                    return;
+                };
+                let existing_text = this.model.read(cx).entries[cur].file_name().to_string_lossy().to_string();
+
+                this.update_view(cx, |this, cx| {
+                    this.popup_line_edit(cx, Some(StatusPrompt::Rename), Some(existing_text.clone()));
+                });
             }))
             .on_action(cx.listener(|this: &mut Self, _: &Escape, cx| {
                 // TODO: clear other UI modes too.
