@@ -5,7 +5,7 @@ use smol::process::Command;
 use std::cmp;
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
-use std::fs::DirEntry;
+use std::fs::{DirEntry};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -25,6 +25,8 @@ pub struct DirModel {
     pub history: Vec<DirHistoryItem>,
     pub start_with: String,
     pub show_hidden: bool,
+    pub cur_stash: Vec<PathBuf>,
+    pub cur_stash_move: bool,
 }
 
 pub struct DialogAction {
@@ -131,6 +133,26 @@ pub async fn worker_error(err: SharedString,
         input_recv).await.expect("Cannot receive from main thread");
 }
 
+pub async fn worker_multi_yes_no(msg: SharedString, existing_response: &mut Option<bool>,
+                                 ui_send: &Sender<DialogRequest>, input_recv: &Receiver<DialogResponse>) -> bool {
+    if existing_response.is_none() {
+        let response = worker_dialog(
+            DialogRequest::new(msg, DialogAction::multi_yes_no()),
+            ui_send,
+            input_recv).await.unwrap();
+
+        if response.action == 0 {
+            *existing_response = Some(true);
+        } else if response.action == 3 {
+            *existing_response = Some(false);
+        }
+
+        response.action < 2
+    } else {
+        existing_response.unwrap()
+    }
+}
+
 pub async fn worker_progress(info: SharedString, last_progress_ts: &mut SystemTime, ui_send: &Sender<DialogRequest>) {
     let now = SystemTime::now();
     let Ok(duration) = now.duration_since(last_progress_ts.clone()) else {
@@ -160,6 +182,25 @@ pub struct OpenDirResult {
 }
 
 impl DirModel {
+    fn load_entry_as_paths(p: &Path) -> std::io::Result<Vec<PathBuf>> {
+        std::fs::read_dir(p).and_then(|entries| {
+            let mut has_err: Option<std::io::Error> = None;
+            let entries: Vec<_> = entries.filter_map(|e| {
+                if e.is_err() {
+                    has_err = e.err();
+                    None
+                } else {
+                    Some(e.unwrap().path())
+                }
+            }).collect();
+            if has_err.is_some() {
+                Err(has_err.unwrap())
+            } else {
+                Ok(entries)
+            }
+        })
+    }
+
     fn load_entries(path: &Path, show_hidden: bool) -> Vec<DirEntry> {
         let mut entries = std::fs::read_dir(path)
             .unwrap()
@@ -189,6 +230,8 @@ impl DirModel {
             history: vec![],
             start_with: String::new(),
             show_hidden,
+            cur_stash: vec![],
+            cur_stash_move: false,
         }
     }
 
@@ -455,25 +498,29 @@ impl DirModel {
             });
     }
 
+    fn operate_items(&self) -> Vec<usize> {
+        if self.marked.is_empty() {
+            self.current.iter().cloned().collect()
+        } else {
+            self.marked.iter().cloned().collect()
+        }
+    }
+
     async fn delete_dir_entries(ui_send: &Sender<DialogRequest>, input_recv: &Receiver<DialogResponse>,
-                                path: &Path, prefix_dir: &str, to_delete: Vec<PathBuf>,
+                                prefix_dir: &str, to_delete: Vec<PathBuf>,
                                 file_response: &mut Option<bool>, dir_response: &mut Option<bool>,
-                                last_progress_ts: &mut SystemTime) -> bool {
-
-        let update_option = |response: &DialogResponse, opt: &mut Option<bool>| {
-            if response.action == 0 {
-                *opt = Some(true);
-            } else if response.action == 3 {
-                *opt = Some(false);
-            }
-        };
-
+                                last_progress_ts: &mut SystemTime,
+                                exception_set: &BTreeSet<PathBuf>) -> bool {
         let nr_to_delete = to_delete.len();
         let mut nr_deleted = 0;
 
         for p in to_delete {
             if worker_should_exit(input_recv).await {
                 break;
+            }
+
+            if exception_set.contains(&p) {
+                continue;
             }
 
             let ent_name_osstring = p.file_name().unwrap();
@@ -483,74 +530,37 @@ impl DirModel {
                 continue;
             };
             if metadata.file_type().is_dir() {
-                let should_delete = if dir_response.is_none() {
-                    let response = worker_dialog(
-                        DialogRequest::new(format!("Recursive delete directory {}?", ent_name).into(),
-                                           DialogAction::multi_yes_no()),
-                        ui_send,
-                        input_recv).await.unwrap();
-
-                    update_option(&response, dir_response);
-
-                    response.action < 2
-                } else {
-                    dir_response.unwrap()
-                };
+                let should_delete = worker_multi_yes_no(
+                    format!("Recursive delete directory {}?", ent_name).into(),
+                    dir_response, ui_send, input_recv).await;
 
                 if !should_delete {
                     continue;
                 }
 
-                let mut next_dir = path.to_path_buf();
-                next_dir.push(&ent_name_osstring);
-
-                let Ok(entries) = std::fs::read_dir(next_dir.as_path()) else {
+                let Ok(next_to_delete) = Self::load_entry_as_paths(&p) else {
                     worker_error(format!("Cannot read dir {}.", ent_name).into(), ui_send, input_recv).await;
                     continue;
                 };
-                let mut has_err = false;
-                let next_to_delete: Vec<_> = entries.filter_map(|e| {
-                    if has_err || e.is_err() {
-                        has_err = true;
-                        None
-                    } else {
-                        Some(e.unwrap().path())
-                    }
-                }).collect();
-
-                if has_err {
-                    worker_error(format!("Cannot read content of dir {}.", ent_name).into(), ui_send, input_recv).await;
-                    continue;
-                }
 
                 let next_prefix_dir = ent_name.clone() + "/";
 
                 let all_empty = Box::pin(Self::delete_dir_entries(
-                    ui_send, input_recv, next_dir.as_path(), &next_prefix_dir, next_to_delete,
-                    file_response, dir_response, last_progress_ts)).await;
+                    ui_send, input_recv, &next_prefix_dir, next_to_delete,
+                    file_response, dir_response, last_progress_ts, exception_set)).await;
 
                 if !all_empty {
                     continue;
                 }
 
-                if let Err(err) = std::fs::remove_dir(next_dir.as_path()) {
+                if let Err(err) = std::fs::remove_dir(&p) {
                     worker_error(format!("Cannot remove dir {}. {}", ent_name, err).into(), ui_send, input_recv).await;
                     continue;
                 }
             } else {
-                let should_delete = if file_response.is_none() {
-                    let response = worker_dialog(
-                        DialogRequest::new(format!("Delete {}?", ent_name).into(), DialogAction::multi_yes_no()),
-                        ui_send,
-                        input_recv).await.unwrap();
-
-                    update_option(&response, file_response);
-                    println!("file response {:?}", file_response);
-
-                    response.action < 2
-                } else {
-                    file_response.unwrap()
-                };
+                let should_delete = worker_multi_yes_no(
+                    format!("Delete {}?", ent_name).into(),
+                    file_response, ui_send, input_recv).await;
 
                 if !should_delete {
                     continue;
@@ -571,11 +581,7 @@ impl DirModel {
 
 
     pub fn delete(&mut self, cx: &mut ModelContext<Self>) -> Result<IOWorker<OpenDirResult>, String> {
-        let to_delete: Vec<usize> = if self.marked.is_empty() {
-            self.current.iter().cloned().collect()
-        } else {
-            self.marked.iter().cloned().collect()
-        };
+        let to_delete = self.operate_items();
         if to_delete.is_empty() {
             return IOWorker::err("Nothing to delete");
         }
@@ -592,12 +598,14 @@ impl DirModel {
                 let mut file_response: Option<bool> = None;
                 let mut dir_response: Option<bool> = None;
                 let mut last_progress_ts = SystemTime::now() - Duration::from_millis(10);
+                let exception_set = BTreeSet::new();
 
                 Self::delete_dir_entries(
                     &ui_send, &input_recv,
-                    &path, "", to_delete,
+                    "", to_delete,
                     &mut file_response, &mut dir_response,
-                    &mut last_progress_ts).await;
+                    &mut last_progress_ts,
+                    &exception_set).await;
 
                 let entries = Self::load_entries(&path, show_hidden);
                 Ok(OpenDirResult {
@@ -607,4 +615,139 @@ impl DirModel {
                 })
             });
     }
+
+    async fn paste_entries(ui_send: &Sender<DialogRequest>, input_recv: &Receiver<DialogResponse>,
+                           path: &Path, prefix_dir: &str, to_paste: Vec<PathBuf>, should_move: bool,
+                           fail_set: &mut BTreeSet<PathBuf>, file_response: &mut Option<bool>,
+                           last_progress_ts: &mut SystemTime) {
+        let mut try_link = should_move;
+        for p in to_paste {
+            if worker_should_exit(input_recv).await {
+                break;
+            }
+
+            let ent_name_osstring = p.file_name().unwrap();
+            let ent_name = prefix_dir.to_string() + ent_name_osstring.to_str().unwrap_or("");
+            let Ok(metadata) = p.symlink_metadata() else {
+                fail_set.insert(p);
+                worker_error(format!("Cannot read metadata of {}", ent_name).into(), ui_send, input_recv).await;
+                continue;
+            };
+
+            let mut target = path.to_path_buf();
+            target.push(ent_name_osstring);
+
+            println!("target {}", target.display());
+
+            if target.exists() {
+                let Ok(target_metadata) = target.symlink_metadata() else {
+                    fail_set.insert(p);
+                    worker_error(format!("{} exists but cannot read its metadata", ent_name).into(), ui_send, input_recv).await;
+                    continue;
+                };
+                if target_metadata.file_type() != metadata.file_type() {
+                    fail_set.insert(p);
+                    worker_error(format!("{} has different type than its original", ent_name).into(), ui_send, input_recv).await;
+                    continue;
+                }
+                if !target_metadata.is_dir() {
+                    let should_overwrite = worker_multi_yes_no(
+                        format!("Overwrite existing file {}?", ent_name).into(),
+                        file_response, ui_send, input_recv).await;
+                    if !should_overwrite {
+                        println!("not overwritting {}", ent_name);
+                        fail_set.insert(p);
+                        continue;
+                    }
+                }
+            }
+
+            worker_progress(format!("{} {}", if should_move { "Moving" } else { "Copying" },ent_name).into(),
+                            last_progress_ts, ui_send).await;
+
+            if metadata.is_dir() {
+                if !target.exists() {
+                    if let Err(err) = std::fs::create_dir(&target) {
+                        fail_set.insert(p);
+                        worker_error(format!("Cannot create {}, {}", ent_name, err).into(), ui_send, input_recv).await;
+                        continue;
+                    }
+                }
+                let Ok(entries) = Self::load_entry_as_paths(&p) else {
+                    fail_set.insert(p);
+                    worker_error(format!("Cannot read original dir {}", ent_name).into(), ui_send, input_recv).await;
+                    continue;
+                };
+                let next_prefix_dir = ent_name.clone() + "/";
+                Box::pin(Self::paste_entries(ui_send, input_recv, &target, &next_prefix_dir, entries, should_move, fail_set, file_response, last_progress_ts)).await;
+            } else {
+                if try_link {
+                    if std::fs::hard_link(&p, &target).is_err() {
+                        try_link = false;
+                    } else {
+                        continue;
+                    }
+                }
+                if let Err(err) = std::fs::copy(&p, &target) {
+                    fail_set.insert(p);
+                    worker_error(format!("Cannot copy {}, {}", ent_name, err).into(), ui_send, input_recv).await;
+                    continue;
+                }
+            }
+        }
+    }
+
+    pub fn paste(&mut self, cx: &mut ModelContext<Self>) -> Result<IOWorker<OpenDirResult>, String> {
+        let path = self.dir_path.clone();
+        let current = self.current.map(|cur| self.entries[cur].file_name().clone());
+        let show_hidden = self.show_hidden;
+        let to_paste = std::mem::take(&mut self.cur_stash);
+        let should_move = self.cur_stash_move;
+        return IOWorker::spawn(
+            cx.background_executor(),
+            "Pasting...",
+            |ui_send, input_recv| async move {
+                let mut file_response: Option<bool> = None;
+                let mut fail_set = BTreeSet::new();
+                let mut last_progress_ts = SystemTime::now() - Duration::from_millis(10);
+
+                Self::paste_entries(&ui_send, &input_recv,
+                                    &path, "", to_paste.clone(), should_move,
+                                    &mut fail_set,
+                                    &mut file_response,
+                                    &mut last_progress_ts).await;
+
+                if should_move && !worker_should_exit(&input_recv).await {
+                    for ent in &fail_set {
+                        println!("fail set {}", ent.display());
+                    }
+
+                    let mut dir_response = Some(true); // Always delete without asking.
+                    file_response = Some(true);
+
+                    Self::delete_dir_entries(&ui_send, &input_recv,
+                                             "", to_paste,
+                                             &mut file_response,
+                                             &mut dir_response,
+                                             &mut last_progress_ts,
+                                             &fail_set).await;
+                }
+
+                let entries = Self::load_entries(&path, show_hidden);
+                Ok(OpenDirResult {
+                    path,
+                    entries,
+                    current,
+                })
+            });
+    }
+
+    pub fn copy_or_move(&mut self, _cx: &mut ModelContext<Self>, should_move: bool) {
+        self.cur_stash.clear();
+        self.cur_stash_move = should_move;
+        for idx in self.operate_items() {
+            self.cur_stash.push(self.entries[idx].path());
+        }
+    }
+
 }

@@ -98,7 +98,7 @@ impl RenderOnce for DirEntryView {
 
 actions!(
     actions,
-    [MoveNext, MovePrev, MoveHome, MoveEnd, ToggleMark, ToggleHidden, Open, Remove, Back, Search, Escape]
+    [MoveNext, MovePrev, MoveHome, MoveEnd, ToggleMark, ToggleHidden, Open, Remove, Copy, Cut, Paste, Back, Search, Escape]
 );
 
 pub struct FileListView {
@@ -145,6 +145,9 @@ impl FileListView {
             KeyBinding::new("backspace", Back, None),
             KeyBinding::new("ctrl-s", Search, None),
             KeyBinding::new("escape", Escape, None),
+            KeyBinding::new("ctrl-w", Cut, None),
+            KeyBinding::new("alt-w", Copy, None),
+            KeyBinding::new("ctrl-y", Paste, None),
         ]);
     }
     pub fn new(cx: &mut ViewContext<Self>, model: Model<DirModel>) -> Self {
@@ -498,7 +501,6 @@ impl Render for FileListView {
             }))
             .on_action(cx.listener(|this: &mut Self, _: &Open, cx| {
                 let should_open_dir = this.model.read(cx).should_open_dir();
-                println!("here");
                 match should_open_dir {
                     Some(true) => {
                         let worker = this.model.update(cx, &DirModel::open_dir);
@@ -517,6 +519,19 @@ impl Render for FileListView {
 
                     },
                 }
+            }))
+            .on_action(cx.listener(|this: &mut Self, _: &Copy, cx| {
+                this.model.update(cx, |model, cx| model.copy_or_move(cx, false));
+            }))
+            .on_action(cx.listener(|this: &mut Self, _: &Cut, cx| {
+                this.model.update(cx, |model, cx| model.copy_or_move(cx, true));
+            }))
+            .on_action(cx.listener(|this: &mut Self, _: &Paste, cx| {
+                let worker = this.model.update(cx, &DirModel::paste);
+                this.update_with_io_worker(cx, worker, |this, cx, open_result| {
+                    this.model.update(cx, |model, _| model.refresh_with_result(open_result));
+                    this.on_navigate(cx);
+                });
             }))
             .on_action(cx.listener(move |this: &mut Self, _: &Remove, cx| {
                 let worker = this.model.update(cx, &DirModel::delete);
