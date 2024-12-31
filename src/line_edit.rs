@@ -3,18 +3,32 @@ use std::ops::Range;
 use gpui::*;
 use unicode_segmentation::*;
 
+// Actions
+
+#[derive(Clone, PartialEq, serde_derive::Deserialize)]
+struct Move {
+    forward: bool,
+    word: bool,
+    delete: bool,
+}
+
+impl Move {
+    fn delete_action() -> Self { Self { forward: true, word: false, delete: true } }
+    fn left_action() -> Self { Move { forward: false, word: false, delete: false } }
+    fn right_action () -> Self { Move { forward: true, word: false, delete: false } }
+    fn left_word_action () -> Self { Move { forward: false, word: true, delete: false } }
+    fn right_word_action () -> Self { Move { forward: true, word: true, delete: false } }
+}
+
+impl_actions!(text_input, [Move]);
+
 actions!(
     text_input,
     [
-        Backspace,
-        Delete,
-        Left,
-        Right,
-        SelectLeft,
-        SelectRight,
         SelectAll,
         Home,
         End,
+        StartSelection,
         ShowCharacterPalette,
         Cancel,
         Commit,
@@ -43,19 +57,32 @@ impl LineEdit {
         cx.on_focus(&focus_handle, |_, cx| {
             println!("focus lineedit");
             cx.clear_key_bindings();
+
             cx.bind_keys([
-                KeyBinding::new("backspace", Backspace, None),
-                KeyBinding::new("delete", Delete, None),
-                KeyBinding::new("left", Left, None),
-                KeyBinding::new("right", Right, None),
-                KeyBinding::new("shift-left", SelectLeft, None),
-                KeyBinding::new("shift-right", SelectRight, None),
-                KeyBinding::new("ctrl-a", SelectAll, None),
+                KeyBinding::new("backspace", Move { forward: false, word: false, delete: true }, None),
+                KeyBinding::new("alt-backspace", Move { forward: false, word: true, delete: true }, None),
+                KeyBinding::new("delete", Move::delete_action(), None),
+                KeyBinding::new("ctrl-d", Move::delete_action(), None),
+                KeyBinding::new("alt-d", Move { forward: true, word: true, delete: true }, None),
+                KeyBinding::new("left", Move::left_action(), None),
+                KeyBinding::new("ctrl-b", Move::left_action(), None),
+                KeyBinding::new("alt-left", Move::left_word_action(), None),
+                KeyBinding::new("alt-b", Move::left_word_action(), None),
+                KeyBinding::new("right", Move::right_action(), None),
+                KeyBinding::new("ctrl-f", Move::right_action(), None),
+                KeyBinding::new("alt-right", Move::right_word_action(), None),
+                KeyBinding::new("alt-f", Move::right_word_action(), None),
+                KeyBinding::new("ctrl-x h", SelectAll, None),
                 KeyBinding::new("home", Home, None),
+                KeyBinding::new("ctrl-a", Home, None),
                 KeyBinding::new("end", End, None),
-                KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, None),
+                KeyBinding::new("ctrl-e", End, None),
                 KeyBinding::new("escape", Cancel, None),
+                KeyBinding::new("ctrl-g", Cancel, None),
+                KeyBinding::new("ctrl-space", StartSelection, None),
                 KeyBinding::new("enter", Commit, None),
+
+                KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, None),
             ]);
         })
         .detach();
@@ -72,28 +99,40 @@ impl LineEdit {
         }
     }
 
-    fn left(&mut self, _: &Left, cx: &mut ViewContext<Self>) {
-        if self.selected_range.is_empty() {
-            self.move_to(self.previous_boundary(self.cursor_offset()), cx);
+    pub fn cursor_offset(&self) -> usize {
+        if self.selection_reversed {
+            self.selected_range.start
         } else {
-            self.move_to(self.selected_range.start, cx)
+            self.selected_range.end
         }
     }
 
-    fn right(&mut self, _: &Right, cx: &mut ViewContext<Self>) {
-        if self.selected_range.is_empty() {
-            self.move_to(self.next_boundary(self.selected_range.end), cx);
-        } else {
-            self.move_to(self.selected_range.end, cx)
+    fn action_move(&mut self, action: &Move, cx: &mut ViewContext<Self>) {
+        if !action.delete || self.selected_range.is_empty() {
+            let pos = if action.word {
+                if action.forward {
+                    Self::next_boundary(self.content.unicode_word_indices(), self.cursor_offset(), self.content.len())
+                } else {
+                    Self::prev_boundary(self.content.unicode_word_indices(), self.cursor_offset())
+                }
+            } else {
+                if action.forward {
+                    Self::next_boundary(self.content.grapheme_indices(true), self.cursor_offset(), self.content.len())
+                } else {
+                    Self::prev_boundary(self.content.grapheme_indices(true), self.cursor_offset())
+                }
+            };
+            if self.is_selecting || action.delete {
+                self.select_to(pos, cx);
+            } else {
+                self.move_to(pos, cx);
+            }
         }
-    }
 
-    fn select_left(&mut self, _: &SelectLeft, cx: &mut ViewContext<Self>) {
-        self.select_to(self.previous_boundary(self.cursor_offset()), cx);
-    }
-
-    fn select_right(&mut self, _: &SelectRight, cx: &mut ViewContext<Self>) {
-        self.select_to(self.next_boundary(self.cursor_offset()), cx);
+        if action.delete {
+            self.replace_text_in_range(None, "", cx);
+            self.is_selecting = false;
+        }
     }
 
     fn select_all(&mut self, _: &SelectAll, cx: &mut ViewContext<Self>) {
@@ -101,26 +140,35 @@ impl LineEdit {
         self.select_to(self.content.len(), cx)
     }
 
+    fn start_selection(&mut self, _: &StartSelection, cx: &mut ViewContext<Self>) {
+        self.is_selecting = true;
+        self.move_to(self.cursor_offset(), cx);
+    }
+
+    fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+        if self.is_selecting {
+            self.is_selecting = false;
+            self.move_to(self.cursor_offset(), cx);
+            return;
+        }
+        cx.emit(DismissEvent);
+    }
+
     fn home(&mut self, _: &Home, cx: &mut ViewContext<Self>) {
-        self.move_to(0, cx);
+        if self.is_selecting {
+            self.select_to(0, cx);
+        } else {
+            self.move_to(0, cx);
+        }
     }
 
     fn end(&mut self, _: &End, cx: &mut ViewContext<Self>) {
-        self.move_to(self.content.len(), cx);
-    }
-
-    fn backspace(&mut self, _: &Backspace, cx: &mut ViewContext<Self>) {
-        if self.selected_range.is_empty() {
-            self.select_to(self.previous_boundary(self.cursor_offset()), cx)
+        let end = self.content.len();
+        if self.is_selecting {
+            self.select_to(end, cx);
+        } else {
+            self.move_to(end, cx);
         }
-        self.replace_text_in_range(None, "", cx)
-    }
-
-    fn delete(&mut self, _: &Delete, cx: &mut ViewContext<Self>) {
-        if self.selected_range.is_empty() {
-            self.select_to(self.next_boundary(self.cursor_offset()), cx)
-        }
-        self.replace_text_in_range(None, "", cx)
     }
 
     fn on_mouse_down(&mut self, event: &MouseDownEvent, cx: &mut ViewContext<Self>) {
@@ -131,10 +179,6 @@ impl LineEdit {
         } else {
             self.move_to(self.index_for_mouse_position(event.position), cx)
         }
-    }
-
-    fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut ViewContext<Self>) {
-        self.is_selecting = false;
     }
 
     fn on_mouse_move(&mut self, event: &MouseMoveEvent, cx: &mut ViewContext<Self>) {
@@ -150,14 +194,6 @@ impl LineEdit {
     pub fn move_to(&mut self, offset: usize, cx: &mut ViewContext<Self>) {
         self.selected_range = offset..offset;
         cx.notify()
-    }
-
-    fn cursor_offset(&self) -> usize {
-        if self.selection_reversed {
-            self.selected_range.start
-        } else {
-            self.selected_range.end
-        }
     }
 
     fn index_for_mouse_position(&self, position: Point<Pixels>) -> usize {
@@ -229,19 +265,14 @@ impl LineEdit {
         self.offset_from_utf16(range_utf16.start)..self.offset_from_utf16(range_utf16.end)
     }
 
-    fn previous_boundary(&self, offset: usize) -> usize {
-        self.content
-            .grapheme_indices(true)
-            .rev()
-            .find_map(|(idx, _)| (idx < offset).then_some(idx))
-            .unwrap_or(0)
+    fn prev_boundary<'a, I>(index: I, offset: usize) -> usize
+    where I: DoubleEndedIterator<Item = (usize, &'a str)> {
+        index.rev().find_map(|(idx, _)| (idx < offset).then_some(idx)).unwrap_or(0)
     }
 
-    fn next_boundary(&self, offset: usize) -> usize {
-        self.content
-            .grapheme_indices(true)
-            .find_map(|(idx, _)| (idx > offset).then_some(idx))
-            .unwrap_or(self.content.len())
+    fn next_boundary<'a, I>(mut index: I, offset: usize, limit: usize) -> usize
+    where I: DoubleEndedIterator<Item = (usize, &'a str)> {
+        index.find_map(|(idx, _)| (idx > offset).then_some(idx)).unwrap_or(limit)
     }
 
     pub fn reset(&mut self) {
@@ -523,21 +554,15 @@ impl Render for LineEdit {
             .key_context("LineEdit")
             .track_focus(&self.focus_handle)
             .cursor(CursorStyle::IBeam)
-            .on_action(cx.listener(Self::backspace))
-            .on_action(cx.listener(Self::delete))
-            .on_action(cx.listener(Self::left))
-            .on_action(cx.listener(Self::right))
-            .on_action(cx.listener(Self::select_left))
-            .on_action(cx.listener(Self::select_right))
+            .on_action(cx.listener(Self::action_move))
             .on_action(cx.listener(Self::select_all))
             .on_action(cx.listener(Self::home))
             .on_action(cx.listener(Self::end))
             .on_action(cx.listener(Self::show_character_palette))
-            .on_action(cx.listener(|_, _: &Cancel, cx| cx.emit(DismissEvent)))
+            .on_action(cx.listener(Self::start_selection))
+            .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(|_, _: &Commit, cx| cx.emit(CommitEvent)))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
-            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
-            .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .bg(rgb(0xeeeeee))
             .text_size(px(12.))
