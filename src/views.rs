@@ -57,7 +57,7 @@ impl RenderOnce for DirEntryView {
             .child(text.clone());
 
         if model.current == Some(self.id) {
-            label_div = label_div.bg(rgb(0x0068d9)).absolute().top(px(icon_size));
+            label_div = label_div.bg(rgb(0x0068d9)).absolute().top(px(icon_size)).text_color(rgb(0xf0f0f0));
         } else {
             label_div = label_div.whitespace_nowrap().overflow_x_hidden().h(px(font_size + 2. * text_radius));
         }
