@@ -499,6 +499,26 @@ impl DirModel {
             });
     }
 
+    pub fn up(&mut self, cx: &mut ModelContext<Self>) -> Result<IOWorker<OpenDirResult>, String> {
+        let mut path = self.dir_path.clone();
+        if !path.pop() {
+            return IOWorker::err(format!("Cannot go to the parent dir. {}", path.display()).as_str());
+        }
+        let show_hidden = self.show_hidden;
+        return IOWorker::spawn(
+            cx.background_executor(),
+            "Moving up. Reading directory...",
+            |ui_send, _input_recv| async move {
+                ui_send.close();
+                let entries = Self::load_entries(&path, show_hidden);
+                Ok(OpenDirResult {
+                    path,
+                    entries,
+                    current: None,
+                })
+            });
+    }
+
     fn operate_items(&self) -> Vec<usize> {
         if self.marked.is_empty() {
             self.current.iter().cloned().collect()

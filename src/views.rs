@@ -97,7 +97,7 @@ impl RenderOnce for DirEntryView {
 
 actions!(
     actions,
-    [MoveNext, MovePrev, MoveHome, MoveEnd, ToggleMark, ToggleHidden, Open, Remove, Copy, Cut, Paste, Rename, Back, Search, Escape]
+    [MoveNext, MovePrev, MoveHome, MoveEnd, ToggleMark, ToggleHidden, Open, Remove, Copy, Cut, Paste, Rename, Up, Back, Search, Escape]
 );
 
 #[derive(PartialEq)]
@@ -159,6 +159,7 @@ impl FileListView {
             KeyBinding::new("r", Rename, None),
             KeyBinding::new("enter", Open, None),
             KeyBinding::new("backspace", Back, None),
+            KeyBinding::new("^", Up, None),
             KeyBinding::new("ctrl-s", Search, None),
             KeyBinding::new("escape", Escape, None),
             KeyBinding::new("ctrl-w", Cut, None),
@@ -380,6 +381,11 @@ impl FileListView {
         self.on_navigate(cx);
     }
 
+    fn io_worker_open_callback(&mut self, cx: &mut ViewContext<Self>, open_result: OpenDirResult) {
+        self.model.update(cx, |model, _| model.open_with_result(open_result));
+        self.on_navigate(cx);
+    }
+
     pub fn update_with_io_worker<T: Send + 'static, Callback>(
         &mut self, cx: &mut ViewContext<Self>, worker_result: Result<IOWorker<T>, String>, callback: Callback)
     where Callback: FnOnce(&mut Self, &mut ViewContext<Self>, T) + 'static {
@@ -551,10 +557,7 @@ impl Render for FileListView {
                 match should_open_dir {
                     Some(true) => {
                         let worker = this.model.update(cx, &DirModel::open_dir);
-                        this.update_with_io_worker(cx, worker, |this, cx, open_result| {
-                            this.model.update(cx, |model, _| model.open_with_result(open_result));
-                            this.on_navigate(cx);
-                        });
+                        this.update_with_io_worker(cx, worker, &Self::io_worker_open_callback);
                     },
                     Some(false) => {
                         let worker = this.model.update(cx, &DirModel::open_file);
@@ -580,6 +583,10 @@ impl Render for FileListView {
             .on_action(cx.listener(move |this: &mut Self, _: &Remove, cx| {
                 let worker = this.model.update(cx, &DirModel::delete);
                 this.update_with_io_worker(cx, worker, &Self::io_worker_refresh_callback);
+            }))
+            .on_action(cx.listener(|this: &mut Self, _: &Up, cx| {
+                let worker = this.model.update(cx, &DirModel::up);
+                this.update_with_io_worker(cx, worker, &Self::io_worker_open_callback);
             }))
             .on_action(cx.listener(|this: &mut Self, _: &Back, cx| {
                 if this.model.read(cx).start_with.is_empty() {
