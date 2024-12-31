@@ -265,14 +265,34 @@ impl LineEdit {
         self.offset_from_utf16(range_utf16.start)..self.offset_from_utf16(range_utf16.end)
     }
 
+    fn extra_seg_pattern(s: char) -> bool {
+        s == '.' || s == '_'
+    }
+
     fn prev_boundary<'a, I>(index: I, offset: usize) -> usize
     where I: DoubleEndedIterator<Item = (usize, &'a str)> {
-        index.rev().find_map(|(idx, _)| (idx < offset).then_some(idx)).unwrap_or(0)
+        index.rev().find_map(|(idx, seg)| {
+            for (didx, _) in seg.match_indices(Self::extra_seg_pattern).rev() {
+                let p = didx + idx;
+                if p + 1 < offset {
+                    return Some(p + 1);
+                }
+            }
+            (idx < offset).then_some(idx)
+        }).unwrap_or(0)
     }
 
     fn next_boundary<'a, I>(mut index: I, offset: usize, limit: usize) -> usize
     where I: DoubleEndedIterator<Item = (usize, &'a str)> {
-        index.find_map(|(idx, _)| (idx > offset).then_some(idx)).unwrap_or(limit)
+        index.find_map(|(idx, seg)| {
+            for (didx, _) in seg.match_indices(Self::extra_seg_pattern) {
+                let p = didx + idx;
+                if p > offset {
+                    return Some(p);
+                }
+            }
+            (idx > offset).then_some(idx)
+        }).unwrap_or(limit)
     }
 
     pub fn reset(&mut self) {
