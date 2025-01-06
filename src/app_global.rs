@@ -3,12 +3,18 @@ use xdg_desktop::icon::{IconDescription, IconIndex};
 use xdg_desktop::menu::{MenuAssociation, MenuIndex, MenuItem};
 use xdg_desktop::mime_glob::MIMEGlobIndex;
 
-use gpui::{Global, ImageSource};
+use gpui::*;
+
+use crate::models::DirModel;
+use crate::views::FileListView;
 
 pub struct AppGlobal {
     mime_index: MIMEGlobIndex,
     pub icon_index: IconIndex,
     pub menu_index: MenuIndex,
+
+    pub cur_stash: Vec<PathBuf>,
+    pub cur_stash_move: bool,
 }
 
 impl Global for AppGlobal {}
@@ -22,10 +28,14 @@ impl AppGlobal {
         let mut menu_index = MenuIndex::new_default();
         menu_index.scan();
 
+        let cur_stash = vec![];
+
         Self {
             mime_index,
             icon_index,
             menu_index,
+            cur_stash,
+            cur_stash_move: false,
         }
     }
 
@@ -86,5 +96,39 @@ impl AppGlobal {
     pub fn write_default_assoc(&mut self, mime: &str, idx: usize) {
         self.menu_index.change_default_assoc(mime, idx);
         self.menu_index.write_default_assoc().unwrap();
+    }
+
+    pub fn stash(&mut self, stash: Vec<PathBuf>, should_move: bool) {
+        self.cur_stash = stash;
+        self.cur_stash_move = should_move;
+    }
+
+    pub fn is_stash_move(&self) -> bool {
+        self.cur_stash_move
+    }
+
+    pub fn take_stash(&mut self) -> Vec<PathBuf> {
+        std::mem::take(&mut self.cur_stash)
+    }
+
+    pub fn new_main_window(target: PathBuf, cx: &mut AppContext) {
+        let bounds = Bounds::centered(None, size(px(460.), px(480.)), cx);
+
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                ..Default::default()
+            },
+            |cx| {
+                let model = cx.new_model(|_| DirModel::new(target, false));
+                let view = cx.new_view(|cx| {
+                    let mut view = FileListView::new(cx, model);
+                    view.on_navigate(cx);
+                    view
+                });
+                cx.focus_view(&view);
+                view
+            },
+        ).unwrap();
     }
 }

@@ -97,7 +97,7 @@ impl RenderOnce for DirEntryView {
 
 actions!(
     actions,
-    [MoveNext, MovePrev, MoveHome, MoveEnd, ToggleMark, ToggleHidden, Open, Remove, Copy, Cut, Paste, Rename, Up, Back, Search, Escape]
+    [MoveNext, MovePrev, MoveHome, MoveEnd, ToggleMark, ToggleHidden, Open, Remove, Copy, Cut, Paste, Rename, Up, Back, Search, Escape, NewWindow]
 );
 
 #[derive(PartialEq)]
@@ -162,9 +162,11 @@ impl FileListView {
             KeyBinding::new("^", Up, None),
             KeyBinding::new("ctrl-s", Search, None),
             KeyBinding::new("escape", Escape, None),
+            KeyBinding::new("ctrl-g", Escape, None),
             KeyBinding::new("ctrl-w", Cut, None),
             KeyBinding::new("alt-w", Copy, None),
             KeyBinding::new("ctrl-y", Paste, None),
+            KeyBinding::new("shift-n", NewWindow, None),
         ]);
     }
 
@@ -619,6 +621,9 @@ impl Render for FileListView {
             .on_action(cx.listener(|this: &mut Self, _: &Escape, cx| {
                 // TODO: clear other UI modes too.
                 this.line_edit.update(cx, |_, cx| cx.emit(DismissEvent));
+            }))
+            .on_action(cx.listener(|this: &mut Self,  _: &NewWindow, cx| {
+                AppGlobal::new_main_window(this.model.read(cx).dir_path.clone(), cx);
             }))
     }
 }

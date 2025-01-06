@@ -26,8 +26,6 @@ pub struct DirModel {
     pub history: Vec<DirHistoryItem>,
     pub start_with: String,
     pub show_hidden: bool,
-    pub cur_stash: Vec<PathBuf>,
-    pub cur_stash_move: bool,
 }
 
 pub struct DialogAction {
@@ -231,8 +229,6 @@ impl DirModel {
             history: vec![],
             start_with: String::new(),
             show_hidden,
-            cur_stash: vec![],
-            cur_stash_move: false,
         }
     }
 
@@ -722,8 +718,8 @@ impl DirModel {
         let path = self.dir_path.clone();
         let current = self.current.map(|cur| self.entries[cur].file_name().clone());
         let show_hidden = self.show_hidden;
-        let to_paste = std::mem::take(&mut self.cur_stash);
-        let should_move = self.cur_stash_move;
+        let to_paste = cx.global_mut::<AppGlobal>().take_stash();
+        let should_move = cx.global::<AppGlobal>().is_stash_move();
         return IOWorker::spawn(
             cx.background_executor(),
             "Pasting...",
@@ -763,12 +759,11 @@ impl DirModel {
             });
     }
 
-    pub fn copy_or_move(&mut self, _cx: &mut ModelContext<Self>, should_move: bool) {
-        self.cur_stash.clear();
-        self.cur_stash_move = should_move;
-        for idx in self.operate_items() {
-            self.cur_stash.push(self.entries[idx].path());
-        }
+    pub fn copy_or_move(&mut self, cx: &mut ModelContext<Self>, should_move: bool) {
+        let stash: Vec<_> = self.operate_items().iter().map(|idx| {
+            self.entries[*idx].path()
+        }).collect();
+        cx.global_mut::<AppGlobal>().stash(stash, should_move);
     }
 
     pub fn rename(&mut self, cx: &mut ModelContext<Self>, new_name: String) -> Result<IOWorker<OpenDirResult>, String> {
