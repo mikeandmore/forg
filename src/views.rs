@@ -623,7 +623,10 @@ impl Render for FileListView {
                 this.line_edit.update(cx, |_, cx| cx.emit(DismissEvent));
             }))
             .on_action(cx.listener(|this: &mut Self,  _: &NewWindow, cx| {
-                AppGlobal::new_main_window(this.model.read(cx).dir_path.clone(), cx);
+                let dir_path = this.model.read(cx).dir_path.clone();
+                cx.spawn(|_, mut cx| async move {
+                    AppGlobal::new_main_window(dir_path, &mut cx);
+                }).detach();
             }))
     }
 }

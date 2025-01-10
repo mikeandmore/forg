@@ -111,8 +111,8 @@ impl AppGlobal {
         std::mem::take(&mut self.cur_stash)
     }
 
-    pub fn new_main_window(target: PathBuf, cx: &mut AppContext) {
-        let bounds = Bounds::centered(None, size(px(460.), px(480.)), cx);
+    pub fn new_main_window(target: PathBuf, cx: &mut AsyncAppContext) {
+        let bounds = Bounds::new(point(px(0.), px(0.)), size(px(460.), px(480.)));
 
         cx.open_window(
             WindowOptions {
