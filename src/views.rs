@@ -455,7 +455,7 @@ impl Render for FileListView {
         //          nr_items, per_line, nr_line, nr_line as f32 * self.full_item_height());
 
         let content_height = nr_line as f32 * self.full_item_height();
-        let list_height = cx.bounds().size.height.0 - 10.; // status bar
+        let list_height = cx.bounds().size.height.0 - 22.; // status bar
         let scroll_handle_off = self.scroll_handle.0.borrow().base_handle.offset().y.0;
 
         let scroll_off = (scroll_handle_off.max(list_height - content_height) * -1.).max(0.) * list_height / content_height;
