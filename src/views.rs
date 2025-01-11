@@ -95,9 +95,27 @@ impl RenderOnce for DirEntryView {
     }
 }
 
+// Actions
+#[derive(Clone, PartialEq, serde_derive::Deserialize)]
+enum ZoomAction {
+    In, Out, Reset,
+}
+
+#[derive(Clone, PartialEq, serde_derive::Deserialize)]
+enum MoveAction {
+    Next, Prev, Home, End,
+}
+
+#[derive(Clone, PartialEq, serde_derive::Deserialize)]
+struct CopyOrCut {
+    should_move: bool
+}
+
+impl_actions!(actions, [ZoomAction, MoveAction, CopyOrCut]);
+
 actions!(
     actions,
-    [MoveNext, MovePrev, MoveHome, MoveEnd, ToggleMark, ToggleHidden, Open, Remove, Copy, Cut, Paste, Rename, Up, Back, Search, Escape, NewWindow]
+    [ToggleMark, ToggleHidden, Open, Remove, Paste, Rename, Up, Back, Search, Escape, NewWindow]
 );
 
 #[derive(PartialEq)]
@@ -149,10 +167,10 @@ impl FileListView {
     fn enter_mode(cx: &mut ViewContext<Self>) {
         cx.clear_key_bindings();
         cx.bind_keys([
-            KeyBinding::new("n", MoveNext, None),
-            KeyBinding::new("p", MovePrev, None),
-            KeyBinding::new("alt-<", MoveHome, None),
-            KeyBinding::new("alt->", MoveEnd, None),
+            KeyBinding::new("n", MoveAction::Next, None),
+            KeyBinding::new("p", MoveAction::Prev, None),
+            KeyBinding::new("alt-<", MoveAction::Home, None),
+            KeyBinding::new("alt->", MoveAction::End, None),
             KeyBinding::new("m", ToggleMark, None),
             KeyBinding::new("h", ToggleHidden, None),
             KeyBinding::new("d", Remove, None),
@@ -163,10 +181,13 @@ impl FileListView {
             KeyBinding::new("ctrl-s", Search, None),
             KeyBinding::new("escape", Escape, None),
             KeyBinding::new("ctrl-g", Escape, None),
-            KeyBinding::new("ctrl-w", Cut, None),
-            KeyBinding::new("alt-w", Copy, None),
+            KeyBinding::new("ctrl-w", CopyOrCut { should_move: true }, None),
+            KeyBinding::new("alt-w", CopyOrCut { should_move: false }, None),
             KeyBinding::new("ctrl-y", Paste, None),
             KeyBinding::new("shift-n", NewWindow, None),
+            KeyBinding::new("ctrl-=", ZoomAction::In, None),
+            KeyBinding::new("ctrl--", ZoomAction::Out, None),
+            KeyBinding::new("ctrl-0", ZoomAction::Reset, None),
         ]);
     }
 
@@ -242,6 +263,22 @@ impl FileListView {
     }
     fn font_size(&self) -> f32 {
         self.icon_size / 32. * 6.
+    }
+
+    pub fn zoom_in(&mut self) {
+        if self.icon_size < 128. {
+            self.icon_size += 16.;
+        }
+    }
+
+    pub fn zoom_out(&mut self) {
+        if self.icon_size > 16. {
+            self.icon_size -= 16.;
+        }
+    }
+
+    pub fn zoom_reset(&mut self) {
+        self.icon_size = 64.;
     }
 
     fn icon_image_source(&self, dir_ent: &DirEntry, mime: &str, cx: &WindowContext) -> ImageSource {
@@ -536,17 +573,13 @@ impl Render for FileListView {
                     .children(status_children),
             )
             .child(self.dialog.clone())
-            .on_action(cx.listener(|this: &mut Self, _: &MoveNext, cx| {
-                this.update_model(cx, &DirModel::move_next);
-            }))
-            .on_action(cx.listener(|this: &mut Self, _: &MovePrev, cx| {
-                this.update_model(cx, &DirModel::move_prev);
-            }))
-            .on_action(cx.listener(|this: &mut Self, _: &MoveHome, cx| {
-                this.update_model(cx, &DirModel::move_home);
-            }))
-            .on_action(cx.listener(|this: &mut Self, _: &MoveEnd, cx| {
-                this.update_model(cx, &DirModel::move_end);
+            .on_action(cx.listener(|this: &mut Self, action: &MoveAction, cx| {
+                match action {
+                    MoveAction::Next => { this.update_model(cx, &DirModel::move_next); },
+                    MoveAction::Prev => { this.update_model(cx, &DirModel::move_prev); },
+                    MoveAction::Home => { this.update_model(cx, &DirModel::move_home); },
+                    MoveAction::End => { this.update_model(cx, &DirModel::move_end); },
+                }
             }))
             .on_action(cx.listener(|this: &mut Self, _: &ToggleMark, cx| {
                 this.update_model(cx, &DirModel::toggle_mark);
@@ -572,11 +605,8 @@ impl Render for FileListView {
                     },
                 }
             }))
-            .on_action(cx.listener(|this: &mut Self, _: &Copy, cx| {
-                this.model.update(cx, |model, cx| model.copy_or_move(cx, false));
-            }))
-            .on_action(cx.listener(|this: &mut Self, _: &Cut, cx| {
-                this.model.update(cx, |model, cx| model.copy_or_move(cx, true));
+            .on_action(cx.listener(|this: &mut Self, action: &CopyOrCut, cx| {
+                this.model.update(cx, |model, cx| model.copy_or_move(cx, action.should_move));
             }))
             .on_action(cx.listener(|this: &mut Self, _: &Paste, cx| {
                 let worker = this.model.update(cx, &DirModel::paste);
@@ -627,6 +657,15 @@ impl Render for FileListView {
                 cx.spawn(|_, mut cx| async move {
                     AppGlobal::new_main_window(dir_path, &mut cx);
                 }).detach();
+            }))
+            .on_action(cx.listener(|this, action: &ZoomAction, cx| {
+                match action {
+                    ZoomAction::In => { this.zoom_in(); },
+                    ZoomAction::Out => { this.zoom_out(); },
+                    ZoomAction::Reset => { this.zoom_reset(); },
+                }
+                this.clear_text_offset_cache(cx);
+                cx.notify();
             }))
     }
 }
