@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use toml::Table;
 use xdg_desktop::icon::{IconDescription, IconIndex};
 use xdg_desktop::menu::{MenuAssociation, MenuIndex, MenuItem};
 use xdg_desktop::mime_glob::MIMEGlobIndex;
@@ -23,7 +24,16 @@ impl AppGlobal {
     pub fn new() -> Self {
         let mut icon_index = IconIndex::new();
         let dirs = std::env::var("XDG_DATA_DIRS").unwrap_or(String::from("/usr/share:/usr/local/share"));
-        icon_index.scan_with_theme(vec!["Papirus", "hicolor"], dirs.split(":").map(|s| Path::new(s)));
+        let paths = dirs.split(":").map(|s| Path::new(s));
+        let config_path = std::env::var("HOME").unwrap() + "/.config/forg.toml";
+        let mut theme = "Adwaita".to_string();
+        if let Ok(config_str) = std::fs::read_to_string(config_path) {
+            let config = toml::from_str::<Table>(&config_str).expect("Cannot parse forg.toml!");
+            config["icon-theme"].as_str().map(|name| { theme = name.to_string(); });
+        }
+
+        icon_index.scan_with_theme(vec![&theme, "hicolor"], paths);
+
         let mime_index = MIMEGlobIndex::new().unwrap();
         let mut menu_index = MenuIndex::new_default();
         menu_index.scan();
