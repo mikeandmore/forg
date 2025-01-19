@@ -1,0 +1,3 @@
+[submodule "zed"]
+	path = zed
+	url = git@github.com:mikeandmore/zed.git

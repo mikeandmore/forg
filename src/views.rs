@@ -403,7 +403,7 @@ impl FileListView {
         view_func.clone()(self, cx);
 
         self.scroll_handle
-            .scroll_to_item(self.model.read(cx).current.unwrap_or(0) / self.items_per_line(cx));
+            .scroll_to_item(self.model.read(cx).current.unwrap_or(0) / self.items_per_line(cx), ScrollStrategy::Top);
 
         cx.notify();
     }

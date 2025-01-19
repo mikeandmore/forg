@@ -124,9 +124,11 @@ impl AppGlobal {
     pub fn new_main_window(target: PathBuf, cx: &mut AsyncAppContext) {
         let bounds = Bounds::new(point(px(0.), px(0.)), size(px(460.), px(480.)));
 
-        cx.open_window(
+        let handle = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                app_id: Some("forg".to_string()),
+                show: false,
                 ..Default::default()
             },
             |cx| {
@@ -140,5 +142,6 @@ impl AppGlobal {
                 view
             },
         ).unwrap();
+
     }
 }

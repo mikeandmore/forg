@@ -310,9 +310,11 @@ impl ViewInputHandler for LineEdit {
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
+        actual_range: &mut Option<Range<usize>>,
         _cx: &mut ViewContext<Self>,
     ) -> Option<String> {
         let range = self.range_from_utf16(&range_utf16);
+        actual_range.replace(self.range_to_utf16(&range));
         Some(self.content[range].to_string())
     }
 

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Forg
+Exec=forg %f
+Type=Application
+Categories=Utility
+StartupNotify=true
+StartupWMClass=forg
+Icon=system-file-manager
