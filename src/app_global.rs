@@ -1,9 +1,14 @@
+use std::fs::File;
+use std::io::{Error, Read};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use futures::Future;
+use image::{Frame, ImageBuffer};
+use smallvec::SmallVec;
 use toml::Table;
 use xdg_desktop::icon::{IconDescription, IconIndex};
 use xdg_desktop::menu::{MenuAssociation, MenuIndex, MenuItem};
 use xdg_desktop::mime_glob::MIMEGlobIndex;
-
 use gpui::*;
 
 use crate::models::DirModel;
@@ -16,6 +21,54 @@ pub struct AppGlobal {
 
     pub cur_stash: Vec<PathBuf>,
     pub cur_stash_move: bool,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+struct CustomSizeSvg {
+    path: PathBuf,
+    actual_size: i32,
+}
+
+struct CustomSizeAvgAsset {}
+
+impl Asset for CustomSizeAvgAsset {
+    type Source = CustomSizeSvg;
+    type Output = Result<Arc<RenderImage>, ImageCacheError>;
+
+    fn load(source: Self::Source, _cx: &mut AppContext) -> impl Future<Output = Self::Output> + Send + 'static {
+        let mut buf = Vec::new();
+        let p = source.path.clone();
+        async move {
+            let Ok(mut f) = File::open(p) else {
+                return Err(ImageCacheError::Io(Arc::new(Error::last_os_error())));
+            };
+            f.read_to_end(&mut buf).unwrap();
+            let tree = usvg::Tree::from_data(buf.as_slice(), &usvg::Options::default());
+            if tree.is_err() {
+                return Err(ImageCacheError::Usvg(Arc::new(tree.err().unwrap())));
+            }
+            let tree = tree.unwrap();
+            let Some(mut pixmap) = resvg::tiny_skia::Pixmap::new(source.actual_size as u32, source.actual_size as u32) else {
+                return Err(ImageCacheError::Io(Arc::new(Error::last_os_error())));
+            };
+            let scale = source.actual_size as f32 / tree.size().width();
+            let transform = resvg::tiny_skia::Transform::from_scale(scale, scale);
+            resvg::render(&tree, transform, &mut pixmap.as_mut());
+
+            let mut buffer = ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take()).unwrap();
+            for pixel in buffer.chunks_exact_mut(4) {
+                pixel.swap(0, 2);
+                if pixel[3] > 0 {
+                    let a = pixel[3] as f32 / 255.;
+                    pixel[0] = (pixel[0] as f32 / a) as u8;
+                    pixel[1] = (pixel[1] as f32 / a) as u8;
+                    pixel[2] = (pixel[2] as f32 / a) as u8;
+                }
+            }
+
+            Ok(Arc::new(RenderImage::new(SmallVec::from_elem(Frame::new(buffer), 1))))
+        }
+    }
 }
 
 impl Global for AppGlobal {}
@@ -49,14 +102,30 @@ impl AppGlobal {
         }
     }
 
+    fn load_image(p: PathBuf, actual_size: i32) -> ImageSource {
+        if p.extension().is_some_and(|ext| ext == "svg") {
+            // We can't use the default image source loader because
+            // GPUI will rasterize according to the SVG file size and
+            // these file sizes may not be correct. After all SVG is
+            // scalable.
+            ImageSource::from(move |cx: &mut WindowContext| {
+                let cus_svg = CustomSizeSvg { path: p.clone(), actual_size };
+                cx.use_asset::<CustomSizeAvgAsset>(&cus_svg)
+            })
+        } else {
+            p.into()
+        }
+    }
+
     pub fn match_icon(&self, mime: &str, size: usize, scale: f32) -> Option<ImageSource> {
-        let actual_size = (size as f32 * scale) as usize;
+        let actual_size = (size as f32 * scale).ceil() as i32;
+
         self.icon_index.index.get(mime).map(move |icons| -> ImageSource {
-            let mut mindiff = usize::MAX;
+            let mut mindiff = i32::MAX;
             let mut candidate = PathBuf::new();
             for icon in icons {
                 if let IconDescription::Bitmap(bitmap_desc) = &icon.desc {
-                    let diff = actual_size - bitmap_desc.size * bitmap_desc.scale;
+                    let diff = actual_size - (bitmap_desc.size * bitmap_desc.scale) as i32;
                     if diff > 0 {
                         if diff < mindiff {
                             mindiff = diff;
@@ -65,9 +134,9 @@ impl AppGlobal {
                         continue;
                     }
                 }
-                return icon.path.clone().into();
+                return Self::load_image(icon.path.clone(), actual_size);
             }
-            return candidate.into();
+            return Self::load_image(candidate.clone(), actual_size);
         })
     }
 
@@ -124,7 +193,7 @@ impl AppGlobal {
     pub fn new_main_window(target: PathBuf, cx: &mut AsyncAppContext) {
         let bounds = Bounds::new(point(px(0.), px(0.)), size(px(460.), px(480.)));
 
-        let handle = cx.open_window(
+        let _handle = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 app_id: Some("forg".to_string()),
