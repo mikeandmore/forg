@@ -1,3 +1,6 @@
 [submodule "zed"]
 	path = zed
 	url = git@github.com:mikeandmore/zed.git
+[submodule "xdg-desktop"]
+	path = xdg-desktop
+	url = git@github.com:mikeandmore/xdg-desktop.git

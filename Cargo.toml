@@ -8,7 +8,8 @@ edition = "2021"
 [dependencies]
 # gpui = { git = "https://github.com/zed-industries/zed" }
 gpui = { path = "./zed/crates/gpui" }
-xdg_desktop = { git = "https://github.com/mikeandmore/xdg-desktop.git" }
+# xdg_desktop = { git = "https://github.com/mikeandmore/xdg-desktop.git" }
+xdg_desktop = { path = "./xdg-desktop" }
 futures = "0.3"
 serde = "1.0.210"
 serde_derive = "1.0.210"
@@ -33,3 +34,7 @@ lto = true
 panic = "abort"
 codegen-units = 1
 strip = true
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"

@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::io::{Error, Read};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use futures::Future;
@@ -76,10 +77,33 @@ impl Global for AppGlobal {}
 impl AppGlobal {
     pub fn new() -> Self {
         let mut icon_index = IconIndex::new();
-        let dirs = std::env::var("XDG_DATA_DIRS").unwrap_or(String::from("/usr/share:/usr/local/share"));
-        let paths = dirs.split(":").map(|s| Path::new(s));
-        let config_path = std::env::var("HOME").unwrap() + "/.config/forg.toml";
-        let mut theme = "Adwaita".to_string();
+        let home_dir = std::env::var("HOME").unwrap();
+
+        let mut res_path = std::env::current_exe().unwrap();
+        res_path.pop();
+        res_path.pop();
+        res_path.push("Resources/");
+
+        let dirs = if cfg!(target_os = "linux") {
+            std::env::var("XDG_DATA_DIRS").unwrap_or(String::from(home_dir.clone() + "/.local/share:/usr/share:/usr/local/share"))
+        } else if cfg!(target_os = "macos") {
+            String::from(home_dir.clone() + "/.local/share:" + res_path.as_os_str().to_str().unwrap())
+        } else {
+            panic!("Unsupported platform");
+        };
+
+        let mut unique_dir = HashSet::new();
+        let paths = dirs.split(":").filter_map(|s| if unique_dir.contains(s) { None } else { unique_dir.insert(s); Some(Path::new(s)) });
+
+        let config_path = home_dir + "/.config/forg.toml";
+        let mut theme = if cfg!(target_os = "linux") {
+            "Adwaita".to_string()
+        } else if cfg!(target_os = "macos") {
+            "Papirus".to_string()
+        } else {
+            panic!("Unsupported platform");
+        };
+
         if let Ok(config_str) = std::fs::read_to_string(config_path) {
             let config = toml::from_str::<Table>(&config_str).expect("Cannot parse forg.toml!");
             config["icon-theme"].as_str().map(|name| { theme = name.to_string(); });
@@ -87,9 +111,24 @@ impl AppGlobal {
 
         icon_index.scan_with_theme(vec![&theme, "hicolor"], paths);
 
-        let mime_index = MIMEGlobIndex::new().unwrap();
+        let mime_index = if cfg!(target_os = "linux") {
+            MIMEGlobIndex::new().unwrap()
+        } else if cfg!(target_os = "macos") {
+            let mut globs_path = res_path.clone();
+            globs_path.push("mime");
+            globs_path.push("globs2");
+            println!("{}", globs_path.display());
+            MIMEGlobIndex::new_with_path(globs_path).unwrap()
+        } else {
+            panic!("");
+        };
+
         let mut menu_index = MenuIndex::new_default();
-        menu_index.scan();
+
+        // Do not scan for DesktopEntries under Mac.
+        if cfg!(target_os = "linux") {
+            menu_index.scan();
+        }
 
         let cur_stash = vec![];
 
@@ -155,7 +194,6 @@ impl AppGlobal {
         })
     }
 
-
     pub fn match_directory_icon(&self, size: usize, scale: f32) -> ImageSource {
         let mime = "folder";
         self.match_icon(&mime, size, scale).unwrap_or_else(|| -> ImageSource {
@@ -197,7 +235,8 @@ impl AppGlobal {
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 app_id: Some("forg".to_string()),
-                show: false,
+                focus: true,
+                show: true,
                 ..Default::default()
             },
             |cx| {
@@ -211,6 +250,5 @@ impl AppGlobal {
                 view
             },
         ).unwrap();
-
     }
 }

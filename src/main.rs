@@ -29,7 +29,7 @@ fn main() {
         exit(-1);
     }
 
-    let runtime_dir = std::env::var("XDG_RUNTIME_DIR").expect("Cannot find the runtime dir (XDG_RUNTIME_DIR)");
+    let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or("/tmp".to_string());
     let sock_path = runtime_dir + "/forg.sock";
     // Try to connect to domain socket and send what we want to open.
 

@@ -115,7 +115,10 @@ impl_actions!(actions, [ZoomAction, MoveAction, CopyOrCut]);
 
 actions!(
     actions,
-    [ToggleMark, ToggleHidden, Open, Remove, Paste, Rename, Up, Back, Search, Escape, NewWindow]
+    [
+        ToggleMark, ToggleHidden, Open, Remove, Paste, Rename, Up, Back, Search, Escape,
+        NewWindow, CloseWindow
+    ]
 );
 
 #[derive(PartialEq)]
@@ -169,8 +172,8 @@ impl FileListView {
         cx.bind_keys([
             KeyBinding::new("n", MoveAction::Next, None),
             KeyBinding::new("p", MoveAction::Prev, None),
-            KeyBinding::new("alt-<", MoveAction::Home, None),
-            KeyBinding::new("alt->", MoveAction::End, None),
+            KeyBinding::new(if cfg!(target_os = "macos") { "cmd-<" } else { "alt-<" }, MoveAction::Home, None),
+            KeyBinding::new(if cfg!(target_os = "macos") { "cmd->" } else { "alt->" }, MoveAction::End, None),
             KeyBinding::new("m", ToggleMark, None),
             KeyBinding::new("h", ToggleHidden, None),
             KeyBinding::new("d", Remove, None),
@@ -185,6 +188,8 @@ impl FileListView {
             KeyBinding::new("alt-w", CopyOrCut { should_move: false }, None),
             KeyBinding::new("ctrl-y", Paste, None),
             KeyBinding::new("shift-n", NewWindow, None),
+            KeyBinding::new("ctrl-x k", CloseWindow, None),
+
             KeyBinding::new("ctrl-=", ZoomAction::In, None),
             KeyBinding::new("ctrl--", ZoomAction::Out, None),
             KeyBinding::new("ctrl-0", ZoomAction::Reset, None),
@@ -658,6 +663,13 @@ impl Render for FileListView {
                 cx.spawn(|_, mut cx| async move {
                     AppGlobal::new_main_window(dir_path, &mut cx);
                 }).detach();
+            }))
+            .on_action(cx.listener(|_: &mut Self, _: &CloseWindow, cx| {
+                let should_quit = cx.windows().len() == 1;
+                cx.remove_window();
+                if should_quit {
+                    cx.quit();
+                }
             }))
             .on_action(cx.listener(|this, action: &ZoomAction, cx| {
                 match action {

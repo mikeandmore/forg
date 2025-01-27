@@ -308,6 +308,22 @@ impl DirModel {
         self.current.and_then(|idx| self.entries[idx].file_type().ok().map(|t| t.is_dir()))
     }
 
+    #[cfg(target_os = "macos")]
+    pub fn open_file(&mut self, cx: &mut ModelContext<Self>) -> Result<IOWorker<Option<(String, usize)>>, String> {
+        let cur_idx = self.current.expect("BUG: use should_open_dir()");
+        let filename = self.entries[cur_idx].path().to_str().unwrap().to_string();
+        IOWorker::spawn(
+            cx.background_executor(),
+            "Open file",
+            |_ui_send, _input_recv| async move {
+                if let Err(err) = Command::new("/usr/bin/open").arg(filename).spawn() {
+                    return Err(err.to_string());
+                }
+                Ok(None)
+            })
+    }
+
+    #[cfg(target_os = "linux")]
     pub fn open_file(&mut self, cx: &mut ModelContext<Self>) -> Result<IOWorker<Option<(String, usize)>>, String> {
         let cur_idx = self.current.expect("BUG: use should_open_dir()");
         let mime = cx.global::<AppGlobal>().match_mime_type(
