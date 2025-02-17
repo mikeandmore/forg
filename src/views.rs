@@ -51,7 +51,7 @@ impl RenderOnce for DirEntryView {
 
         let mut label_div = div()
             .flex_none()
-            .px(px(self.text_offset + text_radius))
+            .px(px(self.text_offset))
             .text_size(px(font_size))
             .rounded(px(text_radius))
             .child(text.clone());
@@ -357,8 +357,9 @@ impl FileListView {
 
         let text_offset = if let Ok(line_layout) = text_system.layout_line(&text, font_size, &runs)
         {
-            if text_width > line_layout.width.to_f64() as f32 {
-                (text_width - line_layout.width.to_f64() as f32) / 2.
+            let layout_width = line_layout.width.to_f64() as f32;
+            if text_width > layout_width {
+                (text_width - layout_width) / 2.
             } else {
                 0.
             }
