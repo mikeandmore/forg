@@ -39,10 +39,12 @@ impl DirEntryView {
     }
 }
 
+static FILENAME_FALLBACK: &str = "Unrecognizable Unicode";
+
 impl RenderOnce for DirEntryView {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let model = self.model.read(cx);
-        let text = model.entries[self.id].file_name().into_string().unwrap();
+        let text = model.entries[self.id].file_name().into_string().unwrap_or(FILENAME_FALLBACK.to_string());
         let listview = self.listview.read(cx);
         let text_radius = listview.text_radius();
         let icon_size = listview.icon_size.clone();
@@ -298,7 +300,7 @@ impl FileListView {
     fn mime_type(&self, dir_ent: &DirEntry, cx: &WindowContext) -> String {
         let app_global = cx.global::<AppGlobal>();
 
-        app_global.match_mime_type(dir_ent.file_name().to_str().unwrap())
+        app_global.match_mime_type(dir_ent.file_name().to_str().unwrap_or(""))
     }
 
     fn clear_text_offset_cache(&mut self, cx: &WindowContext) {
@@ -358,7 +360,7 @@ impl FileListView {
         let text = self.model.read(cx).entries[idx]
             .file_name()
             .into_string()
-            .unwrap();
+            .unwrap_or(FILENAME_FALLBACK.to_string());
 
         let text_offset = if let Ok(line_layout) = text_system.layout_line(&text, font_size, &runs)
         {
