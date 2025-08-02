@@ -12,10 +12,10 @@ use super::dialog::Dialog;
 #[derive(IntoElement)]
 struct DirEntryView {
     id: usize,
-    listview: View<FileListView>,
+    listview: Entity<FileListView>,
     icon: ImageSource,
     // mime_type: String,
-    model: Model<DirModel>,
+    model: Entity<DirModel>,
     text_offset: f32,
 }
 
@@ -23,9 +23,9 @@ impl DirEntryView {
     fn new(
         id: usize,
         icon: ImageSource,
-        listview: View<FileListView>,
+        listview: Entity<FileListView>,
         _mime_type: String,
-        model: Model<DirModel>,
+        model: Entity<DirModel>,
         text_offset: f32,
     ) -> Self {
         Self {
@@ -42,7 +42,7 @@ impl DirEntryView {
 static FILENAME_FALLBACK: &str = "Unrecognizable Unicode";
 
 impl RenderOnce for DirEntryView {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let model = self.model.read(cx);
         let text = model.entries[self.id].file_name().into_string().unwrap_or(FILENAME_FALLBACK.to_string());
         let listview = self.listview.read(cx);
@@ -98,22 +98,20 @@ impl RenderOnce for DirEntryView {
 }
 
 // Actions
-#[derive(Clone, PartialEq, serde_derive::Deserialize)]
+#[derive(Clone, PartialEq, serde_derive::Deserialize, schemars::JsonSchema, Action)]
 enum ZoomAction {
     In, Out, Reset,
 }
 
-#[derive(Clone, PartialEq, serde_derive::Deserialize)]
+#[derive(Clone, PartialEq, serde_derive::Deserialize, schemars::JsonSchema, Action)]
 enum MoveAction {
     Next, Prev, Home, End,
 }
 
-#[derive(Clone, PartialEq, serde_derive::Deserialize)]
+#[derive(Clone, PartialEq, serde_derive::Deserialize, schemars::JsonSchema, Action)]
 struct CopyOrCut {
     should_move: bool
 }
-
-impl_actions!(actions, [ZoomAction, MoveAction, CopyOrCut]);
 
 actions!(
     actions,
@@ -139,16 +137,16 @@ impl StatusPrompt {
 }
 
 pub struct FileListView {
-    model: Model<DirModel>,
+    model: Entity<DirModel>,
     scroll_handle: UniformListScrollHandle,
     icon_size: f32,
 
     text_offset_cache: Vec<Option<f32>>,
     text_offset_cache_scale: f32,
 
-    dialog: View<Dialog>,
+    dialog: Entity<Dialog>,
 
-    pub line_edit: View<LineEdit>,
+    pub line_edit: Entity<LineEdit>,
     status_text: SharedString,
     status_prompt: Option<StatusPrompt>,
 
@@ -157,19 +155,19 @@ pub struct FileListView {
 }
 
 impl FileListView {
-    fn on_dismiss<V>(&mut self, _source: View<V>, _: &DismissEvent, cx: &mut ViewContext<Self>) {
+    fn on_dismiss<V>(&mut self, _source: &Entity<V>, _: &DismissEvent, window: &mut Window, cx: &mut Context<Self>) {
         println!("dismiss event reset");
-        self.focus_handle.focus(cx);
+        self.focus_handle.focus(window);
         self.line_edit.update(cx, |view, _| {
             view.reset();
         });
-        self.update_view(cx, |view, cx| {
+        self.update_view(window, cx, |view, _window, cx| {
             view.model.update(cx, &DirModel::search_clear);
             view.reset_status(cx);
         });
         Self::enter_mode(cx);
     }
-    fn enter_mode(cx: &mut ViewContext<Self>) {
+    fn enter_mode(cx: &mut App) {
         cx.clear_key_bindings();
         cx.bind_keys([
             KeyBinding::new("n", MoveAction::Next, None),
@@ -198,8 +196,8 @@ impl FileListView {
         ]);
     }
 
-    fn on_line_edit_commit(&mut self, edit: View<LineEdit>, _: &CommitEvent, cx: &mut ViewContext<Self>) {
-        self.focus_handle.focus(cx);
+    fn on_line_edit_commit(&mut self, edit: &Entity<LineEdit>, _: &CommitEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus_handle.focus(window);
         Self::enter_mode(cx);
 
         let Some(prompt) = &self.status_prompt else {
@@ -207,7 +205,7 @@ impl FileListView {
         };
 
         if *prompt == StatusPrompt::Search {
-            self.update_view(cx, |view, cx| {
+            self.update_view(window, cx, |view, _window, cx| {
                 let result = view.model.update(cx, |model, cx| {
                     model.start_with = edit.read(cx).content.to_string();
                     model.search_next(cx)
@@ -226,23 +224,24 @@ impl FileListView {
             let new_name = edit.read(cx).content.to_string();
             self.reset_status(cx);
             let worker = self.model.update(cx, |model, cx| model.rename(cx, new_name));
-            self.update_with_io_worker(cx, worker, &Self::io_worker_refresh_callback);
+            self.update_with_io_worker(window, cx, worker, &Self::io_worker_refresh_callback);
         }
     }
 
-    pub fn new(cx: &mut ViewContext<Self>, model: Model<DirModel>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>, model: Entity<DirModel>) -> Self {
         let focus_handle = cx.focus_handle();
 
         Self::enter_mode(cx);
 
-        let line_edit = cx.new_view(&LineEdit::new);
-        let dialog = cx.new_view(&Dialog::new);
-        cx.subscribe(&line_edit, &Self::on_dismiss).detach();
-        cx.subscribe(&dialog, &Self::on_dismiss).detach();
-
-        cx.subscribe(&line_edit, Self::on_line_edit_commit).detach();
+        let line_edit = cx.new(|cx| LineEdit::new(window, cx));
+        let dialog = cx.new(|cx| Dialog::new(window, cx));
 
         let scroll_handle = UniformListScrollHandle::new();
+
+        cx.subscribe_in(&line_edit, window, Self::on_dismiss).detach();
+        cx.subscribe_in(&dialog, window, Self::on_dismiss).detach();
+
+        cx.subscribe_in(&line_edit, window, Self::on_line_edit_commit).detach();
 
         Self {
             model,
@@ -288,42 +287,42 @@ impl FileListView {
         self.icon_size = 64.;
     }
 
-    fn icon_image_source(&self, dir_ent: &DirEntry, mime: &str, cx: &WindowContext) -> ImageSource {
+    fn icon_image_source(&self, dir_ent: &DirEntry, mime: &str, window: &Window, cx: &App) -> ImageSource {
         let app_global = cx.global::<AppGlobal>();
         if dir_ent.file_type().map(|file_type| file_type.is_dir()).unwrap_or(false) {
-            app_global.match_directory_icon(self.icon_size as usize, cx.scale_factor())
+            app_global.match_directory_icon(self.icon_size as usize, window.scale_factor())
         } else {
-            app_global.match_file_icon(mime, self.icon_size as usize, cx.scale_factor())
+            app_global.match_file_icon(mime, self.icon_size as usize, window.scale_factor())
         }
     }
 
-    fn mime_type(&self, dir_ent: &DirEntry, cx: &WindowContext) -> String {
+    fn mime_type(&self, dir_ent: &DirEntry, cx: &App) -> String {
         let app_global = cx.global::<AppGlobal>();
 
         app_global.match_mime_type(dir_ent.file_name().to_str().unwrap_or(""))
     }
 
-    fn clear_text_offset_cache(&mut self, cx: &WindowContext) {
-        self.text_offset_cache_scale = cx.scale_factor();
+    fn clear_text_offset_cache(&mut self, window: &Window, cx: &App) {
+        self.text_offset_cache_scale = window.scale_factor();
         self.text_offset_cache.clear();
         self.text_offset_cache
             .resize(self.model.read(cx).entries.len(), None);
     }
 
-    fn reset_status(&mut self, cx: &ViewContext<Self>) {
+    fn reset_status(&mut self, cx: &Context<Self>) {
         self.status_prompt = None;
         self.status_text =
             SharedString::from(format!("{} Items", self.model.read(cx).entries.len()));
     }
 
-    pub fn on_navigate(&mut self, cx: &mut ViewContext<Self>) {
-        self.clear_text_offset_cache(cx);
+    pub fn on_navigate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.clear_text_offset_cache(window, cx);
         let path = self.model.read(cx).dir_path.to_str().unwrap().to_owned();
-        cx.window_context().set_window_title(&path);
+        window.set_window_title(&path);
         self.line_edit.update(cx, |_, cx| { cx.emit(DismissEvent); });
     }
 
-    pub fn popup_line_edit(&mut self, cx: &mut ViewContext<Self>, prompt: Option<StatusPrompt>, existing_text: Option<String>) {
+    pub fn popup_line_edit(&mut self, window: &mut Window, cx: &mut Context<Self>, prompt: Option<StatusPrompt>, existing_text: Option<String>) {
         self.status_prompt = prompt;
         if let Some(text) = existing_text {
             self.line_edit.update(cx, |model, cx| {
@@ -333,20 +332,20 @@ impl FileListView {
                 model.select_to(len, cx);
             });
         }
-        cx.focus_view(&self.line_edit);
+        cx.focus_view(&self.line_edit, window);
     }
 
-    fn on_search(&mut self, cx: &mut ViewContext<Self>) {
+    fn on_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.model.read(cx).start_with.is_empty() {
-            self.popup_line_edit(cx, Some(StatusPrompt::Search), None);
+            self.popup_line_edit(window, cx, Some(StatusPrompt::Search), None);
         } else {
             self.model.update(cx, &DirModel::search_next);
         }
     }
 
-    fn text_offset_for_item(&mut self, cx: &WindowContext, idx: usize) -> f32 {
-        if self.text_offset_cache_scale != cx.scale_factor() {
-            self.clear_text_offset_cache(cx);
+    fn text_offset_for_item(&mut self, window: &Window, cx: &App, idx: usize) -> f32 {
+        if self.text_offset_cache_scale != window.scale_factor() {
+            self.clear_text_offset_cache(window, cx);
         }
         if let Some(text_offset) = self.text_offset_cache[idx] {
             return text_offset;
@@ -355,24 +354,33 @@ impl FileListView {
         let text_radius = self.text_radius();
         let text_width = self.text_width() - text_radius * 2.;
         let font_size = px(self.font_size());
-        let text_system = cx.text_system();
-        let runs: Vec<TextRun> = Vec::new();
+        let text_system = window.text_system();
+        let text_style = window.text_style();
         let text = self.model.read(cx).entries[idx]
             .file_name()
             .into_string()
             .unwrap_or(FILENAME_FALLBACK.to_string());
 
-        let text_offset = if let Ok(line_layout) = text_system.layout_line(&text, font_size, &runs)
-        {
+        let runs = vec![TextRun {
+            len: text.len(),
+            font: text_style.font(),
+            color: text_style.color,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        }];
+
+
+        let text_offset = {
+            let line_layout = text_system.layout_line(&text, font_size, &runs, None);
             let layout_width = line_layout.width.to_f64() as f32;
             if text_width > layout_width {
                 (text_width - layout_width) / 2.
             } else {
                 0.
             }
-        } else {
-            0.
         };
+
         self.text_offset_cache[idx] = Some(text_offset);
         return text_offset;
     }
@@ -385,99 +393,102 @@ impl FileListView {
         self.icon_size + self.margin_size() * 2. + self.font_size() + self.text_radius() * 2.
     }
 
-    fn items_per_line(&self, cx: &mut ViewContext<Self>) -> usize {
-        (cx.bounds().size.width.to_f64() as f32 / self.full_item_width()) as usize
+    fn items_per_line(&self, window: &mut Window) -> usize {
+        (window.bounds().size.width.to_f64() as f32 / self.full_item_width()) as usize
     }
 
-    pub fn update_model<Func>(&mut self, cx: &mut ViewContext<Self>, func: Func)
+    pub fn update_model<Func>(&mut self, window: &mut Window, cx: &mut Context<Self>, func: Func)
     where
         Func:
-            FnMut(&mut DirModel, &mut ModelContext<'_, DirModel>) + std::marker::Copy,
+            FnMut(&mut DirModel, &mut Context<DirModel>) + std::marker::Copy,
     {
-        self.update_model_view(cx, func, |_, _| {});
+        self.update_model_view(window, cx, func, |_, _, _| {});
     }
 
     pub fn update_model_view<Func, ViewFunc>(
         &mut self,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
         func: Func,
         view_func: ViewFunc,
     ) where
         Func:
-            FnMut(&mut DirModel, &mut ModelContext<'_, DirModel>) + std::marker::Copy,
-        ViewFunc: FnMut(&mut Self, &mut ViewContext<Self>) + std::marker::Copy,
+            FnMut(&mut DirModel, &mut Context<DirModel>) + std::marker::Copy,
+        ViewFunc: FnMut(&mut Self, &mut Window, &mut Context<Self>) + std::marker::Copy,
     {
         self.model.update(cx, func.clone());
-        view_func.clone()(self, cx);
+        view_func.clone()(self, window, cx);
 
         self.scroll_handle
-            .scroll_to_item(self.model.read(cx).current.unwrap_or(0) / self.items_per_line(cx), ScrollStrategy::Top);
+            .scroll_to_item(self.model.read(cx).current.unwrap_or(0) / self.items_per_line(window), ScrollStrategy::Top);
 
         cx.notify();
     }
 
-    pub fn update_view<ViewFunc>(&mut self, cx: &mut ViewContext<Self>, view_func: ViewFunc)
+    pub fn update_view<ViewFunc>(&mut self, window: &mut Window, cx: &mut Context<Self>, view_func: ViewFunc)
     where
-        ViewFunc: FnMut(&mut Self, &mut ViewContext<Self>) + std::marker::Copy,
+        ViewFunc: FnMut(&mut Self, &mut Window, &mut Context<Self>) + std::marker::Copy,
     {
-        self.update_model_view(cx, |_, _| {}, view_func);
+        self.update_model_view(window, cx, |_, _| {}, view_func);
     }
 
-    fn io_worker_refresh_callback(&mut self, cx: &mut ViewContext<Self>, open_result: OpenDirResult) {
+    fn io_worker_refresh_callback(&mut self, window: &mut Window, cx: &mut Context<Self>, open_result: OpenDirResult) {
         self.model.update(cx, |model, _| model.refresh_with_result(open_result));
-        self.on_navigate(cx);
+        self.on_navigate(window, cx);
     }
 
-    fn io_worker_open_callback(&mut self, cx: &mut ViewContext<Self>, open_result: OpenDirResult) {
+    fn io_worker_open_callback(&mut self, window: &mut Window, cx: &mut Context<Self>, open_result: OpenDirResult) {
         self.model.update(cx, |model, _| model.open_with_result(open_result));
-        self.on_navigate(cx);
+        self.on_navigate(window, cx);
     }
 
     pub fn update_with_io_worker<T: Send + 'static, Callback>(
-        &mut self, cx: &mut ViewContext<Self>, worker_result: Result<IOWorker<T>, String>, callback: Callback)
-    where Callback: FnOnce(&mut Self, &mut ViewContext<Self>, T) + 'static {
+        &mut self, window: &mut Window, cx: &mut Context<Self>, worker_result: Result<IOWorker<T>, String>, callback: Callback)
+    where Callback: FnOnce(&mut Self, &mut Window, &mut Context<Self>, T) + 'static {
         match worker_result {
             Err(err) => {
                 self.dialog.update(cx, |dialog, cx| {
-                    dialog.show_just_error(err.into(), cx);
+                    dialog.show_just_error(err.into(), window, cx);
                 });
             },
             Ok(worker) => {
                 self.dialog.update(cx, |dialog, cx| {
                     dialog.show(
                         DialogRequest::new(worker.desc.into(), vec![]),
-                        None, cx);
+                        None,
+                        window,
+                        cx);
                 });
-                cx.spawn(|this, mut cx| async move {
+                cx.spawn_in(window, async move |this, cx: &mut AsyncWindowContext| {
                     loop {
                         let Ok(ui_req) = worker.ui.recv().await else {
                             break;
                         };
-                        this.update(&mut cx, |this, cx| {
+                        this.update_in(cx, |this, window, cx| {
                             let chan = worker.input.clone();
                             let s = cx.subscribe(&this.dialog, move |_this, _dialog, response: &DialogResponse, cx| {
                                 let chan = chan.clone();
                                 let res = response.clone();
-                                cx.spawn(|_this, _cx| async move {
+                                cx.spawn(async move |_this, _cx| {
                                     chan.send(res).await.expect("Cannot send to IOWorker");
                                 }).detach();
                             });
                             this.dialog.update(cx, |dialog, cx| {
-                                dialog.show(ui_req, Some(s), cx);
+                                dialog.show(ui_req, Some(s), window, cx);
                             });
                         }).unwrap();
                     }
                     match worker.result.await {
                         Ok(result) => {
-                            this.update(&mut cx, move |this, cx| {
-                                callback(this, cx, result);
+                            this.update_in(cx, |this, window, cx| {
+                                callback(this, window, cx, result);
                                 this.dialog.update(cx, &Dialog::hide);
                             }).unwrap();
                         },
                         Err(err) => {
-                            this.update(&mut cx, |this, cx| {
+                            this.update_in(cx, |this, window, cx| {
                                 this.dialog.update(cx, |dialog, cx| {
-                                    dialog.show_just_error(err.into(), cx)
+                                    dialog.show_just_error(err.into(), window, cx)
                                 });
                             }).unwrap();
                         }
@@ -489,18 +500,16 @@ impl FileListView {
 }
 
 impl Render for FileListView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let model = self.model.clone();
-        let per_line = self.items_per_line(cx);
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let per_line = self.items_per_line(window);
         let nr_items = self.model.read(cx).entries.len();
         let nr_line = (nr_items + per_line - 1) / per_line;
-        let view = cx.view().clone();
 
         // println!("nr_items {} per-line {} nr_line {} content height {}",
         //          nr_items, per_line, nr_line, nr_line as f32 * self.full_item_height());
 
         let content_height = nr_line as f32 * self.full_item_height();
-        let list_height = cx.bounds().size.height.0 - 22.; // status bar
+        let list_height = window.bounds().size.height.0 - 22.; // status bar
         let scroll_handle_off = self.scroll_handle.0.borrow().base_handle.offset().y.0;
 
         let scroll_off = (scroll_handle_off.max(list_height - content_height) * -1.).max(0.) * list_height / content_height;
@@ -528,10 +537,9 @@ impl Render for FileListView {
                     .flex_row()
                     .child(
                         uniform_list(
-                            cx.view().clone(),
                             "entries",
                             nr_line,
-                            move |this, range, cx| {
+                            cx.processor(move |this, range: std::ops::Range<usize>, window, cx| {
                                 let mut items = Vec::new();
                                 // println!("rendering new line {} {}", &range.start, &range.end);
                                 this.scroll_range = range.clone();
@@ -541,16 +549,16 @@ impl Render for FileListView {
                                     let last_in_line =
                                         std::cmp::min((lidx + 1) * per_line, nr_items);
                                     for id in lidx * per_line..last_in_line {
-                                        let dir_ent = &model.read(cx).entries[id];
+                                        let dir_ent = &this.model.read(cx).entries[id];
                                         let mime = this.mime_type(dir_ent, cx);
 
                                         line.push(DirEntryView::new(
                                             id,
-                                            this.icon_image_source(dir_ent, &mime, cx),
-                                            view.clone(),
+                                            this.icon_image_source(dir_ent, &mime, window, cx),
+                                            cx.entity().clone(),
                                             mime,
-                                            model.clone(),
-                                            this.text_offset_for_item(cx, id),
+                                            this.model.clone(),
+                                            this.text_offset_for_item(window, cx, id),
                                         ));
                                     }
                                     items.push(div().flex().flex_row().children(line));
@@ -558,7 +566,7 @@ impl Render for FileListView {
                                 // cx.notify();
 
                                 items
-                            },
+                            }),
                         )
                         .track_scroll(self.scroll_handle.clone())
                         .flex_auto(),
@@ -581,30 +589,30 @@ impl Render for FileListView {
                     .children(status_children),
             )
             .child(self.dialog.clone())
-            .on_action(cx.listener(|this: &mut Self, action: &MoveAction, cx| {
+            .on_action(cx.listener(|this: &mut Self, action: &MoveAction, window, cx| {
                 match action {
-                    MoveAction::Next => { this.update_model(cx, &DirModel::move_next); },
-                    MoveAction::Prev => { this.update_model(cx, &DirModel::move_prev); },
-                    MoveAction::Home => { this.update_model(cx, &DirModel::move_home); },
-                    MoveAction::End => { this.update_model(cx, &DirModel::move_end); },
+                    MoveAction::Next => { this.update_model(window, cx, &DirModel::move_next); },
+                    MoveAction::Prev => { this.update_model(window, cx, &DirModel::move_prev); },
+                    MoveAction::Home => { this.update_model(window, cx, &DirModel::move_home); },
+                    MoveAction::End => { this.update_model(window, cx, &DirModel::move_end); },
                 }
             }))
-            .on_action(cx.listener(|this: &mut Self, _: &ToggleMark, cx| {
-                this.update_model(cx, &DirModel::toggle_mark);
+            .on_action(cx.listener(|this: &mut Self, _: &ToggleMark, window, cx| {
+                this.update_model(window, cx, &DirModel::toggle_mark);
             }))
-            .on_action(cx.listener(|this: &mut Self, _: &ToggleHidden, cx| {
-                this.update_model_view(cx, &DirModel::toggle_hidden, &FileListView::on_navigate);
+            .on_action(cx.listener(|this: &mut Self, _: &ToggleHidden, window, cx| {
+                this.update_model_view(window, cx, &DirModel::toggle_hidden, &FileListView::on_navigate);
             }))
-            .on_action(cx.listener(|this: &mut Self, _: &Open, cx| {
+            .on_action(cx.listener(|this: &mut Self, _: &Open, window, cx| {
                 let should_open_dir = this.model.read(cx).should_open_dir();
                 match should_open_dir {
                     Some(true) => {
                         let worker = this.model.update(cx, &DirModel::open_dir);
-                        this.update_with_io_worker(cx, worker, &Self::io_worker_open_callback);
+                        this.update_with_io_worker(window, cx, worker, &Self::io_worker_open_callback);
                     },
                     Some(false) => {
                         let worker = this.model.update(cx, &DirModel::open_file);
-                        this.update_with_io_worker(cx, worker, |this, cx, open_result| {
+                        this.update_with_io_worker(window, cx, worker, |this, _window, cx, open_result| {
                             this.model.update(cx, |_, cx| DirModel::after_open_file_result(open_result, cx));
                         });
                     },
@@ -613,80 +621,81 @@ impl Render for FileListView {
                     },
                 }
             }))
-            .on_action(cx.listener(|this: &mut Self, action: &CopyOrCut, cx| {
+            .on_action(cx.listener(|this: &mut Self, action: &CopyOrCut, _window, cx| {
                 this.model.update(cx, |model, cx| model.copy_or_move(cx, action.should_move));
             }))
-            .on_action(cx.listener(|this: &mut Self, _: &Paste, cx| {
+            .on_action(cx.listener(|this: &mut Self, _: &Paste, window, cx| {
                 let worker = this.model.update(cx, &DirModel::paste);
-                this.update_with_io_worker(cx, worker, &Self::io_worker_refresh_callback);
+                this.update_with_io_worker(window, cx, worker, &Self::io_worker_refresh_callback);
             }))
-            .on_action(cx.listener(move |this: &mut Self, _: &Remove, cx| {
+            .on_action(cx.listener(move |this: &mut Self, _: &Remove, window, cx| {
                 let worker = this.model.update(cx, &DirModel::delete);
-                this.update_with_io_worker(cx, worker, &Self::io_worker_refresh_callback);
+                this.update_with_io_worker(window, cx, worker, &Self::io_worker_refresh_callback);
             }))
-            .on_action(cx.listener(|this: &mut Self, _: &Up, cx| {
+            .on_action(cx.listener(|this: &mut Self, _: &Up, window, cx| {
                 let worker = this.model.update(cx, &DirModel::up);
-                this.update_with_io_worker(cx, worker, &Self::io_worker_open_callback);
+                this.update_with_io_worker(window, cx, worker, &Self::io_worker_open_callback);
             }))
-            .on_action(cx.listener(|this: &mut Self, _: &Back, cx| {
+            .on_action(cx.listener(|this: &mut Self, _: &Back, window, cx| {
                 if this.model.read(cx).start_with.is_empty() {
                     let worker = this.model.update(cx, &DirModel::back);
-                    this.update_with_io_worker(cx, worker, |this, cx, open_result| {
+                    this.update_with_io_worker(window, cx, worker, |this, window, cx, open_result| {
                         this.model.update(cx, |model, _| model.back_with_result(open_result));
-                        this.on_navigate(cx);
+                        this.on_navigate(window, cx);
                     });
                 } else {
                     this.update_model_view(
+                        window,
                         cx,
                         &DirModel::search_clear,
                         &FileListView::on_search,
                     );
                 }
             }))
-            .on_action(cx.listener(|this: &mut Self, _: &Search, cx| {
-                this.update_view(cx, &FileListView::on_search);
+            .on_action(cx.listener(|this: &mut Self, _: &Search, window, cx| {
+                this.update_view(window, cx, &FileListView::on_search);
             }))
-            .on_action(cx.listener(|this: &mut Self, _: &Rename, cx| {
+            .on_action(cx.listener(|this: &mut Self, _: &Rename, window, cx| {
                 let Some(cur) = this.model.read(cx).current else {
                     return;
                 };
                 let existing_text = this.model.read(cx).entries[cur].file_name().to_string_lossy().to_string();
 
-                this.update_view(cx, |this, cx| {
-                    this.popup_line_edit(cx, Some(StatusPrompt::Rename), Some(existing_text.clone()));
+                this.update_view(window, cx, |this, window, cx| {
+                    this.popup_line_edit(window, cx, Some(StatusPrompt::Rename), Some(existing_text.clone()));
                 });
             }))
-            .on_action(cx.listener(|this: &mut Self, _: &Escape, cx| {
+            .on_action(cx.listener(|this: &mut Self, _: &Escape, _window, cx| {
                 // TODO: clear other UI modes too.
                 this.line_edit.update(cx, |_, cx| cx.emit(DismissEvent));
             }))
-            .on_action(cx.listener(|this: &mut Self,  _: &NewWindow, cx| {
+            .on_action(cx.listener(|this: &mut Self,  _: &NewWindow, _window, cx| {
                 let dir_path = this.model.read(cx).dir_path.clone();
-                cx.spawn(|_, mut cx| async move {
-                    AppGlobal::new_main_window(dir_path, &mut cx);
+                cx.spawn(async |_, cx: &mut AsyncApp| {
+                    AppGlobal::new_main_window(dir_path, cx);
                 }).detach();
             }))
-            .on_action(cx.listener(|_: &mut Self, _: &CloseWindow, cx| {
+            .on_action(cx.listener(|_: &mut Self, _: &CloseWindow, window, cx| {
                 let should_quit = cx.windows().len() == 1;
-                cx.remove_window();
+                window.remove_window();
                 if should_quit {
                     cx.quit();
                 }
             }))
-            .on_action(cx.listener(|this, action: &ZoomAction, cx| {
+            .on_action(cx.listener(|this, action: &ZoomAction, window, cx| {
                 match action {
                     ZoomAction::In => { this.zoom_in(); },
                     ZoomAction::Out => { this.zoom_out(); },
                     ZoomAction::Reset => { this.zoom_reset(); },
                 }
-                this.clear_text_offset_cache(cx);
+                this.clear_text_offset_cache(window, cx);
                 cx.notify();
             }))
     }
 }
 
-impl FocusableView for FileListView {
-    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+impl Focusable for FileListView {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
         println!("main get focus_handle");
         self.focus_handle.clone()
     }

@@ -1,6 +1,6 @@
 use smol::channel::{Receiver, RecvError, Sender};
 use smol::prelude::*;
-use gpui::{BackgroundExecutor, ModelContext, SharedString, Task};
+use gpui::{Action, BackgroundExecutor, Context, SharedString, Task};
 use smol::process::Command;
 use std::cmp;
 use std::collections::BTreeSet;
@@ -74,7 +74,7 @@ impl DialogRequest {
     }
 }
 
-#[derive(Clone, PartialEq, serde_derive::Deserialize)]
+#[derive(Clone, PartialEq, serde_derive::Deserialize, schemars::JsonSchema, Action)]
 pub struct DialogResponse {
     pub action: usize,
     pub sel_option: Option<usize>
@@ -232,7 +232,7 @@ impl DirModel {
         }
     }
 
-    pub fn move_next(&mut self, _: &mut ModelContext<Self>) {
+    pub fn move_next(&mut self, _: &mut Context<Self>) {
         if !self.entries.is_empty() {
             self.current = Some(
                 self.current
@@ -241,7 +241,7 @@ impl DirModel {
         }
     }
 
-    pub fn search_next(&mut self, _: &mut ModelContext<Self>) -> bool {
+    pub fn search_next(&mut self, _: &mut Context<Self>) -> bool {
         let do_search = |this: &mut Self, range: Range<usize>| -> bool {
             for idx in range {
                 if let Some(fname) = this.entries[idx].file_name().to_str() {
@@ -261,29 +261,29 @@ impl DirModel {
         }
     }
 
-    pub fn search_clear(&mut self, _: &mut ModelContext<Self>) {
+    pub fn search_clear(&mut self, _: &mut Context<Self>) {
         self.start_with.clear();
     }
 
-    pub fn move_prev(&mut self, _: &mut ModelContext<Self>) {
+    pub fn move_prev(&mut self, _: &mut Context<Self>) {
         self.current = self
             .current
             .map_or(None, |v| Some(if v == 0 { 0 } else { v - 1 }));
     }
 
-    pub fn move_home(&mut self, _: &mut ModelContext<Self>) {
+    pub fn move_home(&mut self, _: &mut Context<Self>) {
         if !self.entries.is_empty() {
             self.current = Some(0);
         }
     }
 
-    pub fn move_end(&mut self, _: &mut ModelContext<Self>) {
+    pub fn move_end(&mut self, _: &mut Context<Self>) {
         if !self.entries.is_empty() {
             self.current = Some(self.entries.len() - 1);
         }
     }
 
-    pub fn toggle_mark(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn toggle_mark(&mut self, cx: &mut Context<Self>) {
         if let Some(cur) = self.current {
             if self.marked.contains(&cur) {
                 self.marked.remove(&cur);
@@ -294,7 +294,7 @@ impl DirModel {
         self.move_next(cx);
     }
 
-    pub fn toggle_hidden(&mut self, _cx: &mut ModelContext<Self>) {
+    pub fn toggle_hidden(&mut self, _cx: &mut Context<Self>) {
         self.show_hidden = !self.show_hidden;
         self.marked = BTreeSet::new();
         let cur_filename = self.current.map(|idx| self.entries[idx].file_name());
@@ -309,7 +309,7 @@ impl DirModel {
     }
 
     #[cfg(target_os = "macos")]
-    pub fn open_file(&mut self, cx: &mut ModelContext<Self>) -> Result<IOWorker<Option<(String, usize)>>, String> {
+    pub fn open_file(&mut self, cx: &mut Context<Self>) -> Result<IOWorker<Option<(String, usize)>>, String> {
         let cur_idx = self.current.expect("BUG: use should_open_dir()");
         let filename = self.entries[cur_idx].path().to_str().unwrap().to_string();
         IOWorker::spawn(
@@ -324,7 +324,7 @@ impl DirModel {
     }
 
     #[cfg(target_os = "linux")]
-    pub fn open_file(&mut self, cx: &mut ModelContext<Self>) -> Result<IOWorker<Option<(String, usize)>>, String> {
+    pub fn open_file(&mut self, cx: &mut Context<Self>) -> Result<IOWorker<Option<(String, usize)>>, String> {
         let cur_idx = self.current.expect("BUG: use should_open_dir()");
         let mime = cx.global::<AppGlobal>().match_mime_type(
             self.entries[cur_idx].file_name().to_str().unwrap());
@@ -389,13 +389,13 @@ impl DirModel {
             });
     }
 
-    pub fn after_open_file_result(default: Option<(String, usize)>, cx:&mut ModelContext<Self>) {
+    pub fn after_open_file_result(default: Option<(String, usize)>, cx:&mut Context<Self>) {
         if let Some((mime, idx)) = default {
             cx.global_mut::<AppGlobal>().write_default_assoc(&mime, idx);
         }
     }
 
-    pub fn open_dir(&mut self, cx: &mut ModelContext<Self>) -> Result<IOWorker<OpenDirResult>, String> {
+    pub fn open_dir(&mut self, cx: &mut Context<Self>) -> Result<IOWorker<OpenDirResult>, String> {
         let resolve_symlink = |path: PathBuf| -> Result<PathBuf, ()> {
             if let Ok(link_path) = path.read_link() {
                 if link_path.is_relative() {
@@ -488,7 +488,7 @@ impl DirModel {
         }
     }
 
-    pub fn back(&mut self, cx: &mut ModelContext<Self>) -> Result<IOWorker<OpenDirResult>, String> {
+    pub fn back(&mut self, cx: &mut Context<Self>) -> Result<IOWorker<OpenDirResult>, String> {
         let Some(ent) = self.history.last() else {
             return IOWorker::err("History empty");
         };
@@ -511,7 +511,7 @@ impl DirModel {
             });
     }
 
-    pub fn up(&mut self, cx: &mut ModelContext<Self>) -> Result<IOWorker<OpenDirResult>, String> {
+    pub fn up(&mut self, cx: &mut Context<Self>) -> Result<IOWorker<OpenDirResult>, String> {
         let mut path = self.dir_path.clone();
         if !path.pop() {
             return IOWorker::err(format!("Cannot go to the parent dir. {}", path.display()).as_str());
@@ -613,7 +613,7 @@ impl DirModel {
     }
 
 
-    pub fn delete(&mut self, cx: &mut ModelContext<Self>) -> Result<IOWorker<OpenDirResult>, String> {
+    pub fn delete(&mut self, cx: &mut Context<Self>) -> Result<IOWorker<OpenDirResult>, String> {
         let to_delete = self.operate_items();
         if to_delete.is_empty() {
             return IOWorker::err("Nothing to delete");
@@ -730,7 +730,7 @@ impl DirModel {
         }
     }
 
-    pub fn paste(&mut self, cx: &mut ModelContext<Self>) -> Result<IOWorker<OpenDirResult>, String> {
+    pub fn paste(&mut self, cx: &mut Context<Self>) -> Result<IOWorker<OpenDirResult>, String> {
         let path = self.dir_path.clone();
         let current = self.current.map(|cur| self.entries[cur].file_name().clone());
         let show_hidden = self.show_hidden;
@@ -775,14 +775,14 @@ impl DirModel {
             });
     }
 
-    pub fn copy_or_move(&mut self, cx: &mut ModelContext<Self>, should_move: bool) {
+    pub fn copy_or_move(&mut self, cx: &mut Context<Self>, should_move: bool) {
         let stash: Vec<_> = self.operate_items().iter().map(|idx| {
             self.entries[*idx].path()
         }).collect();
         cx.global_mut::<AppGlobal>().stash(stash, should_move);
     }
 
-    pub fn rename(&mut self, cx: &mut ModelContext<Self>, new_name: String) -> Result<IOWorker<OpenDirResult>, String> {
+    pub fn rename(&mut self, cx: &mut Context<Self>, new_name: String) -> Result<IOWorker<OpenDirResult>, String> {
         let Some(cur) = self.current else {
             return IOWorker::err("Nothing selected.");
         };

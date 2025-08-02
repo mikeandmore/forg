@@ -5,7 +5,7 @@ use unicode_segmentation::*;
 
 // Actions
 
-#[derive(Clone, PartialEq, serde_derive::Deserialize)]
+#[derive(Clone, PartialEq, serde_derive::Deserialize, schemars::JsonSchema, Action)]
 struct Move {
     forward: bool,
     word: bool,
@@ -19,8 +19,6 @@ impl Move {
     fn left_word_action () -> Self { Move { forward: false, word: true, delete: false } }
     fn right_word_action () -> Self { Move { forward: true, word: true, delete: false } }
 }
-
-impl_actions!(text_input, [Move]);
 
 actions!(
     text_input,
@@ -52,9 +50,9 @@ impl EventEmitter<DismissEvent> for LineEdit {}
 impl EventEmitter<CommitEvent> for LineEdit {}
 
 impl LineEdit {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
-        cx.on_focus(&focus_handle, |_, cx| {
+        cx.on_focus(&focus_handle, window, |_, _window, cx: &mut Context<Self>| {
             println!("focus lineedit");
             cx.clear_key_bindings();
 
@@ -107,7 +105,7 @@ impl LineEdit {
         }
     }
 
-    fn action_move(&mut self, action: &Move, cx: &mut ViewContext<Self>) {
+    fn action_move(&mut self, action: &Move, window: &mut Window, cx: &mut Context<Self>) {
         if !action.delete || self.selected_range.is_empty() {
             let pos = if action.word {
                 if action.forward {
@@ -125,73 +123,73 @@ impl LineEdit {
             if self.is_selecting || action.delete {
                 self.select_to(pos, cx);
             } else {
-                self.move_to(pos, cx);
+                self.move_to(pos, window, cx);
             }
         }
 
         if action.delete {
-            self.replace_text_in_range(None, "", cx);
+            self.replace_text_in_range(None, "", window, cx);
             self.is_selecting = false;
         }
     }
 
-    fn select_all(&mut self, _: &SelectAll, cx: &mut ViewContext<Self>) {
-        self.move_to(0, cx);
+    fn select_all(&mut self, _: &SelectAll, window: &mut Window, cx: &mut Context<Self>) {
+        self.move_to(0, window, cx);
         self.select_to(self.content.len(), cx)
     }
 
-    fn start_selection(&mut self, _: &StartSelection, cx: &mut ViewContext<Self>) {
+    fn start_selection(&mut self, _: &StartSelection, window: &mut Window, cx: &mut Context<Self>) {
         self.is_selecting = true;
-        self.move_to(self.cursor_offset(), cx);
+        self.move_to(self.cursor_offset(), window, cx);
     }
 
-    fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+    fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if self.is_selecting {
             self.is_selecting = false;
-            self.move_to(self.cursor_offset(), cx);
+            self.move_to(self.cursor_offset(), window, cx);
             return;
         }
         cx.emit(DismissEvent);
     }
 
-    fn home(&mut self, _: &Home, cx: &mut ViewContext<Self>) {
+    fn home(&mut self, _: &Home, window: &mut Window, cx: &mut Context<Self>) {
         if self.is_selecting {
             self.select_to(0, cx);
         } else {
-            self.move_to(0, cx);
+            self.move_to(0, window, cx);
         }
     }
 
-    fn end(&mut self, _: &End, cx: &mut ViewContext<Self>) {
+    fn end(&mut self, _: &End, window: &mut Window, cx: &mut Context<Self>) {
         let end = self.content.len();
         if self.is_selecting {
             self.select_to(end, cx);
         } else {
-            self.move_to(end, cx);
+            self.move_to(end, window, cx);
         }
     }
 
-    fn on_mouse_down(&mut self, event: &MouseDownEvent, cx: &mut ViewContext<Self>) {
+    fn on_mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.is_selecting = true;
 
         if event.modifiers.shift {
             self.select_to(self.index_for_mouse_position(event.position), cx);
         } else {
-            self.move_to(self.index_for_mouse_position(event.position), cx)
+            self.move_to(self.index_for_mouse_position(event.position), window, cx)
         }
     }
 
-    fn on_mouse_move(&mut self, event: &MouseMoveEvent, cx: &mut ViewContext<Self>) {
+    fn on_mouse_move(&mut self, event: &MouseMoveEvent, _window: &mut Window, cx: &mut Context<Self>) {
         if self.is_selecting {
             self.select_to(self.index_for_mouse_position(event.position), cx);
         }
     }
 
-    fn show_character_palette(&mut self, _: &ShowCharacterPalette, cx: &mut ViewContext<Self>) {
-        cx.show_character_palette();
+    fn show_character_palette(&mut self, _: &ShowCharacterPalette, window: &mut Window, _cx: &mut Context<Self>) {
+        window.show_character_palette();
     }
 
-    pub fn move_to(&mut self, offset: usize, cx: &mut ViewContext<Self>) {
+    pub fn move_to(&mut self, offset: usize, _window: &mut Window, cx: &mut Context<Self>) {
         self.selected_range = offset..offset;
         cx.notify()
     }
@@ -214,7 +212,7 @@ impl LineEdit {
         line.closest_index_for_x(position.x - bounds.left())
     }
 
-    pub fn select_to(&mut self, offset: usize, cx: &mut ViewContext<Self>) {
+    pub fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
         if self.selection_reversed {
             self.selected_range.start = offset
         } else {
@@ -306,12 +304,13 @@ impl LineEdit {
     }
 }
 
-impl ViewInputHandler for LineEdit {
+impl EntityInputHandler for LineEdit {
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
         actual_range: &mut Option<Range<usize>>,
-        _cx: &mut ViewContext<Self>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
     ) -> Option<String> {
         let range = self.range_from_utf16(&range_utf16);
         actual_range.replace(self.range_to_utf16(&range));
@@ -321,7 +320,8 @@ impl ViewInputHandler for LineEdit {
     fn selected_text_range(
         &mut self,
         _ignore_disabled_input: bool,
-        _cx: &mut ViewContext<Self>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
     ) -> Option<UTF16Selection> {
         Some(UTF16Selection {
             range: self.range_to_utf16(&self.selected_range),
@@ -329,13 +329,21 @@ impl ViewInputHandler for LineEdit {
         })
     }
 
-    fn marked_text_range(&self, _cx: &mut ViewContext<Self>) -> Option<Range<usize>> {
+    fn marked_text_range(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>
+    ) -> Option<Range<usize>> {
         self.marked_range
             .as_ref()
             .map(|range| self.range_to_utf16(range))
     }
 
-    fn unmark_text(&mut self, _cx: &mut ViewContext<Self>) {
+    fn unmark_text(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>
+    ) {
         self.marked_range = None;
     }
 
@@ -343,7 +351,8 @@ impl ViewInputHandler for LineEdit {
         &mut self,
         range_utf16: Option<Range<usize>>,
         new_text: &str,
-        cx: &mut ViewContext<Self>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         let range = range_utf16
             .as_ref()
@@ -364,7 +373,8 @@ impl ViewInputHandler for LineEdit {
         range_utf16: Option<Range<usize>>,
         new_text: &str,
         new_selected_range_utf16: Option<Range<usize>>,
-        cx: &mut ViewContext<Self>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         let range = range_utf16
             .as_ref()
@@ -389,7 +399,8 @@ impl ViewInputHandler for LineEdit {
         &mut self,
         range_utf16: Range<usize>,
         bounds: Bounds<Pixels>,
-        _cx: &mut ViewContext<Self>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
         let last_layout = self.last_layout.as_ref()?;
         let range = self.range_from_utf16(&range_utf16);
@@ -404,10 +415,25 @@ impl ViewInputHandler for LineEdit {
             ),
         ))
     }
+
+    fn character_index_for_point(
+        &mut self,
+        point: gpui::Point<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        let line_point = self.last_bounds?.localize(&point)?;
+        let last_layout = self.last_layout.as_ref()?;
+
+        assert_eq!(last_layout.text, self.content);
+        let utf8_index = last_layout.index_for_x(point.x - line_point.x)?;
+        Some(self.offset_to_utf16(utf8_index))
+    }
+
 }
 
 struct TextElement {
-    input: View<LineEdit>,
+    input: Entity<LineEdit>,
 }
 
 struct PrepaintState {
@@ -433,29 +459,37 @@ impl Element for TextElement {
         None
     }
 
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        cx: &mut WindowContext,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut style = Style::default();
         style.size.width = relative(1.).into();
-        style.size.height = cx.line_height().into();
-        (cx.request_layout(style, []), ())
+        style.size.height = window.line_height().into();
+        (window.request_layout(style, [], cx), ())
     }
 
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Self::PrepaintState {
         let input = self.input.read(cx);
         let content = input.content.clone();
         let selected_range = input.selected_range.clone();
         let cursor = input.cursor_offset();
-        let style = cx.text_style();
+        let style = window.text_style();
 
         let (display_text, text_color) = (content.clone(), style.color);
 
@@ -494,11 +528,10 @@ impl Element for TextElement {
             vec![run]
         };
 
-        let font_size = style.font_size.to_pixels(cx.rem_size());
-        let line = cx
+        let font_size = style.font_size.to_pixels(window.rem_size());
+        let line = window
             .text_system()
-            .shape_line(display_text, font_size, &runs)
-            .unwrap();
+            .shape_line(display_text, font_size, &runs, None);
 
         let cursor_pos = line.x_for_index(cursor);
         let (selection, cursor) = if selected_range.is_empty() {
@@ -540,25 +573,28 @@ impl Element for TextElement {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) {
         let focus_handle = self.input.read(cx).focus_handle.clone();
-        cx.handle_input(
+        window.handle_input(
             &focus_handle,
             ElementInputHandler::new(bounds, self.input.clone()),
+            cx,
         );
         if let Some(selection) = prepaint.selection.take() {
-            cx.paint_quad(selection)
+            window.paint_quad(selection)
         }
         let line = prepaint.line.take().unwrap();
-        line.paint(bounds.origin, cx.line_height(), cx).unwrap();
+        line.paint(bounds.origin, window.line_height(), window, cx).unwrap();
 
-        if focus_handle.is_focused(cx) {
+        if focus_handle.is_focused(window) {
             if let Some(cursor) = prepaint.cursor.take() {
-                cx.paint_quad(cursor);
+                window.paint_quad(cursor);
             }
         }
 
@@ -570,7 +606,7 @@ impl Element for TextElement {
 }
 
 impl Render for LineEdit {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .key_context("LineEdit")
@@ -583,7 +619,7 @@ impl Render for LineEdit {
             .on_action(cx.listener(Self::show_character_palette))
             .on_action(cx.listener(Self::start_selection))
             .on_action(cx.listener(Self::cancel))
-            .on_action(cx.listener(|_, _: &Commit, cx| cx.emit(CommitEvent)))
+            .on_action(cx.listener(|_, _: &Commit, _window, cx| cx.emit(CommitEvent)))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .bg(rgb(0xeeeeee))
@@ -593,17 +629,17 @@ impl Render for LineEdit {
                     .h(px(20.))
                     .w_full()
                     .border_1()
-                    .border_color(rgb(if self.focus_handle.is_focused(cx) {0x59cdff} else {0xefefef}))
+                    .border_color(rgb(if self.focus_handle.is_focused(window) {0x59cdff} else {0xefefef}))
                     .bg(white())
                     .child(TextElement {
-                        input: cx.view().clone(),
+                        input: cx.entity().clone(),
                     }),
             )
     }
 }
 
-impl FocusableView for LineEdit {
-    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+impl Focusable for LineEdit {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }

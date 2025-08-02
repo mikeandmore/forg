@@ -36,7 +36,7 @@ impl Asset for CustomSizeAvgAsset {
     type Source = CustomSizeSvg;
     type Output = Result<Arc<RenderImage>, ImageCacheError>;
 
-    fn load(source: Self::Source, _cx: &mut AppContext) -> impl Future<Output = Self::Output> + Send + 'static {
+    fn load(source: Self::Source, _cx: &mut App) -> impl Future<Output = Self::Output> + Send + 'static {
         let mut buf = Vec::new();
         let p = source.path.clone();
         async move {
@@ -147,9 +147,9 @@ impl AppGlobal {
             // GPUI will rasterize according to the SVG file size and
             // these file sizes may not be correct. After all SVG is
             // scalable.
-            ImageSource::from(move |cx: &mut WindowContext| {
+            ImageSource::from(move |window: &mut Window, cx: &mut App| {
                 let cus_svg = CustomSizeSvg { path: p.clone(), actual_size };
-                cx.use_asset::<CustomSizeAvgAsset>(&cus_svg)
+                window.use_asset::<CustomSizeAvgAsset>(&cus_svg, cx)
             })
         } else {
             p.into()
@@ -228,7 +228,7 @@ impl AppGlobal {
         std::mem::take(&mut self.cur_stash)
     }
 
-    pub fn new_main_window(target: PathBuf, cx: &mut AsyncAppContext) {
+    pub fn new_main_window(target: PathBuf, cx: &mut AsyncApp) {
         let bounds = Bounds::new(point(px(0.), px(0.)), size(px(460.), px(480.)));
 
         let _handle = cx.open_window(
@@ -239,14 +239,15 @@ impl AppGlobal {
                 show: true,
                 ..Default::default()
             },
-            |cx| {
-                let model = cx.new_model(|_| DirModel::new(target, false));
-                let view = cx.new_view(|cx| {
-                    let mut view = FileListView::new(cx, model);
-                    view.on_navigate(cx);
+            |window, cx| {
+                let model = cx.new(|_| DirModel::new(target, false));
+                let view = cx.new(|cx| {
+                    let mut view = FileListView::new(window, cx, model);
+                    view.on_navigate(window, cx);
                     view
                 });
-                cx.focus_view(&view);
+                view.focus_handle(cx).focus(window);
+
                 view
             },
         ).unwrap();

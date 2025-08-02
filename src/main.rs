@@ -10,7 +10,7 @@ pub mod models;
 pub mod views;
 pub mod app_global;
 
-async fn handle_client(cx: &mut AsyncAppContext, stream: &mut UnixStream) -> io::Result<()> {
+async fn handle_client(cx: &mut AsyncApp, stream: &mut UnixStream) -> io::Result<()> {
     let mut szbuf = [0u8; 2];
     stream.read_exact(&mut szbuf).await?;
     let sz = u16::from_le_bytes(szbuf);
@@ -47,7 +47,7 @@ fn main() {
         exit(-1);
     }
 
-    App::new().run(|cx: &mut AppContext| {
+    Application::new().run(|cx: &mut App| {
         let mut async_cx = cx.to_async();
         cx.foreground_executor().spawn(async move {
             if std::fs::exists(&sock_path).unwrap_or(false) {
@@ -69,8 +69,8 @@ fn main() {
         cx.set_global(AppGlobal::new());
         println!("Done");
 
-        cx.spawn(|mut cx| async move {
-            AppGlobal::new_main_window(target, &mut cx);
+        cx.spawn(async move |cx| {
+            AppGlobal::new_main_window(target, cx);
         }).detach();
     });
 }
