@@ -31,9 +31,11 @@ debug = false
 lto = false
 
 [profile.release]
+opt-level = 'z'
 lto = true
 panic = "abort"
-codegen-units = 1
+# codegen-units = 1
+debug = false
 strip = true
 
 [lints.clippy]
