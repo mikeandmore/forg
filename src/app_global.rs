@@ -7,7 +7,7 @@ use futures::Future;
 use image::{Frame, ImageBuffer};
 use smallvec::SmallVec;
 use toml::Table;
-use xdg_desktop::icon::{IconDescription, IconIndex};
+use xdg_desktop::icon::IconCollection;
 use xdg_desktop::menu::{MenuAssociation, MenuIndex, MenuItem};
 use xdg_desktop::mime_glob::MIMEGlobIndex;
 use gpui::*;
@@ -17,7 +17,7 @@ use crate::views::FileListView;
 
 pub struct AppGlobal {
     mime_index: MIMEGlobIndex,
-    pub icon_index: IconIndex,
+    pub icon_col: IconCollection,
     pub menu_index: MenuIndex,
 
     pub cur_stash: Vec<PathBuf>,
@@ -76,7 +76,7 @@ impl Global for AppGlobal {}
 
 impl AppGlobal {
     pub fn new() -> Self {
-        let mut icon_index = IconIndex::new();
+        let mut icon_col = IconCollection::new();
         let home_dir = std::env::var("HOME").unwrap();
 
         let mut res_path = std::env::current_exe().unwrap();
@@ -109,7 +109,7 @@ impl AppGlobal {
             config["icon-theme"].as_str().map(|name| { theme = name.to_string(); });
         }
 
-        icon_index.scan_with_theme(vec![&theme, "hicolor"], paths);
+        icon_col.scan_with_theme(vec![&theme, "hicolor"], paths);
 
         let mime_index = if cfg!(target_os = "linux") {
             MIMEGlobIndex::new().unwrap()
@@ -134,7 +134,7 @@ impl AppGlobal {
 
         Self {
             mime_index,
-            icon_index,
+            icon_col,
             menu_index,
             cur_stash,
             cur_stash_move: false,
@@ -159,23 +159,8 @@ impl AppGlobal {
     pub fn match_icon(&self, mime: &str, size: usize, scale: f32) -> Option<ImageSource> {
         let actual_size = (size as f32 * scale).ceil() as i32;
 
-        self.icon_index.index.get(mime).map(move |icons| -> ImageSource {
-            let mut mindiff = i32::MAX;
-            let mut candidate = PathBuf::new();
-            for icon in icons {
-                if let IconDescription::Bitmap(bitmap_desc) = &icon.desc {
-                    let diff = actual_size - (bitmap_desc.size * bitmap_desc.scale) as i32;
-                    if diff > 0 {
-                        if diff < mindiff {
-                            mindiff = diff;
-                            candidate = icon.path.clone();
-                        }
-                        continue;
-                    }
-                }
-                return Self::load_image(icon.path.clone(), actual_size);
-            }
-            return Self::load_image(candidate.clone(), actual_size);
+        self.icon_col.find_icon(mime, actual_size as usize).map(move |(_desc, p)| -> ImageSource {
+            Self::load_image(p, actual_size)
         })
     }
 
